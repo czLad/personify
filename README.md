@@ -246,7 +246,7 @@ The shorthand list — full reasoning is in [`docs/DECISIONS.md`](docs/DECISIONS
 This repository currently contains the **skeleton only**. Every layer has just enough code to communicate with the next layer for a health check. Real functionality is implemented incrementally per the [roadmap](docs/ROADMAP.md).
 
 **Milestone schedule:**
-- **Milestone 1 — Working MVP** — May 2, 2026
+- **Milestone 1 — Working MVP** — May 9, 2026
 - **Milestone 2 — Full Feature Set** — May 16, 2026
 - **Milestone 3 — Polish & Stretch** — June 6, 2026
 
