@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Personify",
+  "version": "0.1.0",
+  "description": "Agentic AI for job application personal statements.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "http://localhost:8000/*",
+    "https://*.ashbyhq.com/*",
+    "https://*.greenhouse.io/*",
+    "https://*.myworkdayjobs.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.ashbyhq.com/*",
+        "https://*.greenhouse.io/*",
+        "https://*.myworkdayjobs.com/*"
+      ],
+      "js": ["src/content_script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "Personify"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
