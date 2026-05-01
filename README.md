@@ -26,13 +26,13 @@ Unlike Simplify, which only autofills structured fields and skips personal state
 ## Features
 
 **Implemented in this skeleton:**
-- ✅ Project structure for all four components (extension, frontend, backend, AI pipeline)
-- ✅ Health check endpoints between every layer
-- ✅ Stub `/autofill` endpoint that returns mock generated responses
-- ✅ Chrome extension scaffold with a content script that talks to the backend
-- ✅ Next.js dashboard scaffold with one upload page and one history page
-- ✅ Supabase + pgvector schema migrations
-- ✅ Environment variable templates
+- Project structure for all four components (extension, frontend, backend, AI pipeline)
+- Health check endpoints between every layer
+- Stub `/autofill` endpoint that returns mock generated responses
+- Chrome extension scaffold with a content script that talks to the backend
+- Next.js dashboard scaffold with one upload page and one history page
+- Supabase + pgvector schema migrations
+- Environment variable templates
 
 **To be implemented (assigned across the team):**
 - ⏳ Real document upload, chunking, and embedding pipeline
