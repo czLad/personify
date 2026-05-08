@@ -1,27 +1,53 @@
-"""Document upload endpoint. Stubbed — to be implemented by Backend Core + ML Infra."""
-from fastapi import APIRouter, File, UploadFile, HTTPException
+"""
+Document upload endpoint.
+
+For the MVP: accepts a file, hands it to the embedding service which
+chunks + embeds + stores it. Yousif will later add Supabase Storage
+persistence and tie this to the authenticated user's ID.
+
+Until auth is wired, all uploads go to a single DEMO_USER_ID so the
+demo works.
+"""
+from fastapi import APIRouter, File, Header, HTTPException, UploadFile
+
+from app.services.embeddings import ingest_document
+from app.services.pipeline import DEMO_USER_ID
 
 router = APIRouter()
 
 
 @router.post("")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(
+    file: UploadFile = File(...),
+    x_user_id: str | None = Header(default=None),
+):
     """
-    TODO: Implement full upload pipeline.
-    1. Validate file type (PDF, TXT, DOCX)
-    2. Store raw file in Supabase Storage
-    3. Hand off to embedding service: chunk → embed → store in pgvector
-    4. Return chunk count + document ID
+    Upload a resume or essay, chunk it, embed each chunk, and store the
+    embeddings for later retrieval by the autofill pipeline.
 
-    Currently returns a stub response so the frontend can be built against it.
+    The X-User-Id header is honored if present (so Yousif's auth middleware
+    can pass through a real user_id once it's wired). Otherwise we use the
+    demo user.
     """
     if not file.filename:
         raise HTTPException(status_code=400, detail="missing filename")
 
+    contents = await file.read()
+    if len(contents) == 0:
+        raise HTTPException(status_code=400, detail="empty file")
+
+    user_id = x_user_id or DEMO_USER_ID
+
+    summary = ingest_document(
+        file_bytes=contents,
+        content_type=file.content_type,
+        filename=file.filename,
+        user_id=user_id,
+    )
+
     return {
-        "status": "stubbed",
         "filename": file.filename,
         "content_type": file.content_type,
-        "chunks_stored": 0,
-        "note": "real implementation pending — see ROADMAP.md",
+        "user_id": user_id,
+        **summary,
     }
