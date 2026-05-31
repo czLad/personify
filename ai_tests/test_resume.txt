@@ -1,0 +1,11 @@
+Min Phone Myat Zaw - UCLA Computer Science and Linguistics, expected 2027.
+
+Built Personify, a Chrome extension that uses a LangChain pipeline with RAG
+over a user's resume to auto-fill personal statement questions on job
+applications. Demoed at CS35L final showcase.
+
+Skills: Python, FastAPI, JavaScript, React, LangChain, Gemini API, vector
+databases, agentic AI workflows, Chrome extensions (Manifest V3).
+
+Interested in tools that augment knowledge work — productivity software,
+IDE integrations, anything that makes thinking and writing faster.
