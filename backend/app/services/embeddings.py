@@ -107,7 +107,7 @@ def embed_texts(texts: Iterable[str]) -> list[list[float]]:
     vectors: list[list[float]] = []
     for text in text_list:
         result = genai.embed_content(
-            model="models/text-embedding-004",
+            model="models/gemini-embedding-001",
             content=text,
             task_type="retrieval_document",
         )
@@ -123,7 +123,7 @@ def embed_query(text: str) -> list[float]:
     import google.generativeai as genai
     genai.configure(api_key=settings.gemini_api_key)
     result = genai.embed_content(
-        model="models/text-embedding-004",
+        model="models/gemini-embedding-001",
         content=text,
         task_type="retrieval_query",
     )

@@ -1,16 +1,23 @@
 """
-Skeleton smoke tests + tests for the new AI pipeline behavior.
+Tests for the pipeline orchestration and the /autofill HTTP endpoint.
 
-These tests don't hit the real Gemini API. They verify:
-  - The classifier correctly buckets fields.
-  - With no API key configured, the pipeline still returns a structured
-    response (placeholder text) rather than crashing.
-  - The retrieval fallback (in-memory) works end-to-end.
+These tests don't hit the real Gemini API. Classification is mocked out
+(it has its own test file). The pipeline tests focus on:
+
+  - HTTP endpoint wiring (/health, /autofill, /upload)
+  - Pipeline correctly skips STANDARD fields
+  - user_id threading + DEMO_USER_ID fallback
+  - Graceful handling when GEMINI_API_KEY is absent
+  - End-to-end memory store population from /upload
 """
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 
+from app.models.schemas import FormField
+from app.services.classifier import FieldClassification
 from app.services.embeddings import _MEMORY_STORE, get_memory_store
-from app.services.pipeline import DEMO_USER_ID, _quick_classify
+from app.services.pipeline import DEMO_USER_ID, run_autofill_pipeline
 from main import app
 
 client = TestClient(app)
@@ -29,25 +36,7 @@ def test_root():
     assert r.status_code == 200
 
 
-# ── Classifier ────────────────────────────────────────────────────────────────
-
-def test_quick_classify_personal_statement():
-    assert _quick_classify("Why do you want to work at Notion?") == "PERSONAL_STATEMENT"
-    assert _quick_classify("Tell us about a challenge you overcame") == "PERSONAL_STATEMENT"
-    assert _quick_classify("Cover Letter") == "PERSONAL_STATEMENT"
-
-
-def test_quick_classify_standard():
-    assert _quick_classify("First Name") == "STANDARD"
-    assert _quick_classify("LinkedIn URL") == "STANDARD"
-    assert _quick_classify("Years of Experience") == "STANDARD"
-
-
-def test_quick_classify_uncertain():
-    assert _quick_classify("Additional Information") is None
-
-
-# ── Autofill end-to-end ───────────────────────────────────────────────────────
+# ── /autofill HTTP endpoint (no Gemini key needed — placeholder text is fine) ─
 
 def test_autofill_skips_standard_fields():
     """STANDARD fields should not get a generated response."""
@@ -85,7 +74,47 @@ def test_autofill_targets_personal_statement_fields():
     assert len(body["responses"][0]["response"]) > 0
 
 
-# ── Memory store / RAG fallback ───────────────────────────────────────────────
+# ── Pipeline function directly (classification mocked) ────────────────────────
+
+@patch("app.services.pipeline.classify_fields")
+def test_pipeline_empty_fields_short_circuits(mock_classify):
+    """No fields in → no classifier call, no responses out."""
+    result = run_autofill_pipeline([], "", "")
+    assert result == []
+    mock_classify.assert_not_called()
+
+
+@patch("app.services.pipeline.classify_fields")
+def test_pipeline_uses_demo_user_when_no_user_id(mock_classify):
+    """If caller doesn't pass user_id, DEMO_USER_ID is used downstream."""
+    mock_classify.return_value = [
+        FieldClassification(selector="#q1", classification="PERSONAL_STATEMENT", confidence=0.9),
+    ]
+    fields = [FormField(selector="#q1", label="Why?", field_type="textarea")]
+
+    with patch("app.services.pipeline.retrieve") as mock_retrieve:
+        mock_retrieve.return_value = []
+        run_autofill_pipeline(fields, "", "Notion")
+        # Confirm retrieve was called with the demo user, not None
+        mock_retrieve.assert_called_once()
+        assert mock_retrieve.call_args.kwargs["user_id"] == DEMO_USER_ID
+
+
+@patch("app.services.pipeline.classify_fields")
+def test_pipeline_passes_through_explicit_user_id(mock_classify):
+    """If caller passes user_id, it's threaded all the way to retrieve."""
+    mock_classify.return_value = [
+        FieldClassification(selector="#q1", classification="PERSONAL_STATEMENT", confidence=0.9),
+    ]
+    fields = [FormField(selector="#q1", label="Why?", field_type="textarea")]
+
+    with patch("app.services.pipeline.retrieve") as mock_retrieve:
+        mock_retrieve.return_value = []
+        run_autofill_pipeline(fields, "", "Notion", user_id="user-123")
+        assert mock_retrieve.call_args.kwargs["user_id"] == "user-123"
+
+
+# ── /upload → memory store integration ───────────────────────────────────────
 
 def test_memory_store_is_populated_after_upload():
     """Uploading a text file should populate the in-memory chunk store."""
@@ -106,7 +135,6 @@ def test_memory_store_is_populated_after_upload():
     body = r.json()
     assert body["chunks_stored"] >= 1
 
-    # Confirm the in-memory store now has chunks for the demo user.
     store = get_memory_store()
     assert DEMO_USER_ID in store
     assert len(store[DEMO_USER_ID]) >= 1

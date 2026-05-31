@@ -1,22 +1,15 @@
 """
 The agentic pipeline.
 
-This is the brain of Personify. The extension's content script handles
-perceive (DOM scan) and act (paste). This module handles decide:
+This module is intentionally a stub right now. The real implementation
+will use LangChain to chain three steps:
 
-  1. Classify   — for each form field, is this a personal statement question?
-  2. Retrieve   — for personal-statement fields, fetch relevant chunks from
-                  the user's resume and past essays via RAG (pgvector).
-  3. Generate   — hand the question + chunks + job context to Gemini, get
-                  back a personalized 100-word response.
+  1. classify_fields    —  Gemini decides which fields need a personal statement response.
+  2. retrieve_context   — pgvector returns relevant chunks from the user's docs
+  3. generate_response  — Gemini writes a personalized response per field
 
-The classifier is a cheap keyword pre-filter followed by an LLM check, so
-we avoid burning tokens on obviously-standard fields like "First Name."
-
-LangChain is used for prompt templating and the LLM wrapper. The RAG
-retrieval is a plain function call rather than a LangChain Retriever
-because it needs to be aware of the user_id from the request context,
-which is awkward to thread through a LangChain chain.
+For now we return a deterministic mock so the extension and frontend can
+develop against a stable contract.
 """
 from __future__ import annotations
 
@@ -25,77 +18,10 @@ import logging
 from app.core.config import settings
 from app.models.schemas import FieldResponse, FormField
 from app.services.retrieval import retrieve
+from app.services.classifier import classify_fields
+
 
 logger = logging.getLogger(__name__)
-
-
-# ── Cheap keyword pre-filter ──────────────────────────────────────────────────
-# These keywords catch ~80% of personal statement questions without an LLM
-# call. The LLM verifies borderline cases below.
-
-_OBVIOUS_PERSONAL_STATEMENT_KEYWORDS = (
-    "why do you want",
-    "why are you interested",
-    "why this company",
-    "why should we",
-    "tell us about",
-    "describe a time",
-    "describe a challenge",
-    "what motivates",
-    "what excites",
-    "cover letter",
-    "personal statement",
-    "your interest in",
-    "fit for this role",
-)
-
-_OBVIOUS_STANDARD_KEYWORDS = (
-    "first name",
-    "last name",
-    "full name",
-    "email",
-    "phone",
-    "address",
-    "city",
-    "state",
-    "zip",
-    "country",
-    "linkedin",
-    "github",
-    "website",
-    "portfolio",
-    "school",
-    "university",
-    "gpa",
-    "graduation",
-    "degree",
-    "years of experience",
-    "salary",
-    "start date",
-    "available",
-    "authorized",
-    "sponsorship",
-    "visa",
-    "race",
-    "gender",
-    "ethnicity",
-    "veteran",
-    "disability",
-)
-
-
-def _quick_classify(label: str) -> str | None:
-    """
-    Returns 'PERSONAL_STATEMENT', 'STANDARD', or None if uncertain.
-    None means: defer to the LLM classifier.
-    """
-    lower = label.lower()
-    if any(kw in lower for kw in _OBVIOUS_PERSONAL_STATEMENT_KEYWORDS):
-        return "PERSONAL_STATEMENT"
-    if any(kw in lower for kw in _OBVIOUS_STANDARD_KEYWORDS):
-        return "STANDARD"
-    return None
-
 
 # ── LangChain LLM setup ───────────────────────────────────────────────────────
 
@@ -112,27 +38,6 @@ def _get_llm():
 
 
 # ── LangChain prompts ─────────────────────────────────────────────────────────
-
-def _build_classify_chain():
-    """
-    LLM-based classifier for fields the keyword filter couldn't decide.
-    Returns a LangChain chain or None if Gemini isn't configured.
-    """
-    llm = _get_llm()
-    if llm is None:
-        return None
-
-    from langchain_core.prompts import PromptTemplate
-
-    prompt = PromptTemplate.from_template(
-        "You classify form fields on a job application page.\n"
-        "Given a field's label, decide if it is a personal statement question "
-        "(an open-ended question expecting an essay-style answer about the "
-        "applicant) or a standard field (name, email, GPA, dropdowns, etc.).\n\n"
-        "Field label: \"{label}\"\n\n"
-        "Reply with exactly one word: PERSONAL_STATEMENT or STANDARD."
-    )
-    return prompt | llm
 
 
 def _build_generate_chain():
@@ -163,20 +68,6 @@ def _build_generate_chain():
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _llm_classify(label: str) -> str:
-    """Use Gemini to classify a field whose label was ambiguous."""
-    chain = _build_classify_chain()
-    if chain is None:
-        # No API key: be conservative, treat as STANDARD so we don't paste an essay.
-        return "STANDARD"
-    try:
-        result = chain.invoke({"label": label})
-        text = (result.content if hasattr(result, "content") else str(result)).strip().upper()
-        return "PERSONAL_STATEMENT" if "PERSONAL_STATEMENT" in text else "STANDARD"
-    except Exception as e:
-        logger.warning("classify fallback (%s)", e)
-        return "STANDARD"
 
 
 def _generate_response(
@@ -225,15 +116,35 @@ def run_autofill_pipeline(
     user_id: str | None = None,
 ) -> list[FieldResponse]:
     """
-    Full classify → retrieve → generate pipeline.
+    classify → [retrieve] → [generate]
+
+    Classify step is now live (Gemini via LangChain with heuristic fallback).
+    Retrieve + generate are stubs pending pgvector integration.
     """
+    if not fields:
+        return []
+    
     user_id = user_id or DEMO_USER_ID
+
+    # ── Step 1: Classify ──────────────────────────────────────────────────────
+    raw_fields = [
+        {
+            "selector": f.selector,
+            "label": f.label,
+            "field_type": f.field_type,
+        }
+        for f in fields
+    ]
+
+    classifications = classify_fields(raw_fields)
+
+    # Build a quick lookup: selector → classification
+    class_map = {c.selector: c.classification for c in classifications}
+
     responses: list[FieldResponse] = []
 
     for field in fields:
-        # 1. Classify (cheap filter first, then LLM if needed)
-        classification = _quick_classify(field.label) or _llm_classify(field.label)
-        if classification != "PERSONAL_STATEMENT":
+        if class_map.get(field.selector, "STANDARD") != "PERSONAL_STATEMENT":
             continue
 
         # 2. Retrieve
@@ -242,7 +153,7 @@ def run_autofill_pipeline(
         # 3. Generate
         text = _generate_response(
             question=field.label,
-            company=company_name,
+            company=company_name or "this company",
             job_description=job_description,
             context_chunks=context_chunks,
         )
@@ -252,5 +163,12 @@ def run_autofill_pipeline(
             response=text,
             classification="PERSONAL_STATEMENT",
         ))
+        logger.debug("Field '%s' classified as PERSONAL_STATEMENT", field.label)
+
+    logger.info(
+        "Pipeline complete: %d fields in, %d personal statement fields out",
+        len(fields),
+        len(responses),
+    )
 
     return responses
