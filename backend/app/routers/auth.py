@@ -6,11 +6,12 @@ from supabase import create_client, Client
 
 
 router = APIRouter()
+# Can be replaced with data from .env.example?
 SUPABASE_URL = "https://test.supabase.co"
 SUPABASE_KEY = "public-anonymous-key"
 supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-
+# If we go with Google, this will not be needed
 @router.post("/signup", response_model=AuthResponse)
 def signup(payload: SignupRequest):
     """
@@ -36,7 +37,7 @@ def signup(payload: SignupRequest):
         raise HTTPException(status_code=400, detail=str(e))
     # raise HTTPException(status_code=501, detail="signup not yet implemented")
 
-
+# If we go with Google, this will not be needed
 @router.post("/login", response_model=AuthResponse)
 def login(payload: LoginRequest):
     """
