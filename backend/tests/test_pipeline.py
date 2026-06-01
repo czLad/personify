@@ -138,3 +138,46 @@ def test_memory_store_is_populated_after_upload():
     store = get_memory_store()
     assert DEMO_USER_ID in store
     assert len(store[DEMO_USER_ID]) >= 1
+    
+# ── /upload validation ────────────────────────────────────────────────────────
+
+def test_upload_rejects_unsupported_type():
+    """An unsupported MIME type should return 415."""
+    r = client.post(
+        "/upload",
+        files={"file": ("resume.docx", b"fake docx bytes", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
+    )
+    assert r.status_code == 415
+    assert "Unsupported file type" in r.json()["detail"]
+
+
+def test_upload_rejects_empty_file():
+    """An empty file should return 400."""
+    r = client.post(
+        "/upload",
+        files={"file": ("resume.txt", b"", "text/plain")},
+    )
+    assert r.status_code == 400
+    assert "empty" in r.json()["detail"].lower()
+
+
+def test_upload_rejects_oversized_file():
+    """A file over 10MB should return 413."""
+    huge = b"x" * (11 * 1024 * 1024)  # 11MB
+    r = client.post(
+        "/upload",
+        files={"file": ("resume.txt", huge, "text/plain")},
+    )
+    assert r.status_code == 413
+    assert "too large" in r.json()["detail"].lower()
+
+
+def test_upload_accepts_markdown():
+    """The allowlist includes text/markdown; should succeed."""
+    md_resume = b"# Min\n\nUCLA CS, building Personify."
+    r = client.post(
+        "/upload",
+        files={"file": ("resume.md", md_resume, "text/markdown")},
+    )
+    assert r.status_code == 200
+    assert r.json()["chunks_stored"] >= 1
