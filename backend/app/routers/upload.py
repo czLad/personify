@@ -1,78 +1,68 @@
 """
 Document upload endpoint.
+
+Accepts a resume/essay, validates it, then hands it to the embedding service
+which chunks + embeds + stores it for later retrieval by the autofill pipeline.
+
+Auth note: until Yousif wires real auth, uploads use the X-User-Id header if
+present, otherwise a single DEMO_USER_ID so the demo works.
 """
-from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel
 
-from app.services.embedder import process_upload
+from app.services.embeddings import ingest_document
+from app.services.pipeline import DEMO_USER_ID
 
 router = APIRouter()
 
-ALLOWED_CONTENT_TYPES = {
-    "application/pdf",
-    "text/plain",
-    "text/markdown",
-}
-
+ALLOWED_CONTENT_TYPES = {"application/pdf", "text/plain", "text/markdown"}
 MAX_FILE_SIZE_MB = 10
 MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
 
 
 class UploadResponse(BaseModel):
     status: str
-    document_id: str
     filename: str
+    user_id: str
     chunks_stored: int
-
-
-def _get_user_id(request: Request) -> str:
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
-    token = auth_header.removeprefix("Bearer ").strip()
-    try:
-        import base64, json
-        payload_b64 = token.split(".")[1]
-        payload_b64 += "=" * (4 - len(payload_b64) % 4)
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64))
-        user_id = payload.get("sub")
-        if not user_id:
-            raise ValueError("no sub claim")
-        return user_id
-    except Exception:
-        raise HTTPException(status_code=401, detail="Could not parse user ID from token")
+    stored_in: str
 
 
 @router.post("", response_model=UploadResponse)
 async def upload_document(
-    request: Request,
     file: UploadFile = File(...),
+    x_user_id: str | None = Header(default=None),
 ):
-    user_id = _get_user_id(request)
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="missing filename")
     if file.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
             status_code=415,
             detail=f"Unsupported file type: {file.content_type}. Allowed: PDF, TXT, MD",
         )
-    file_bytes = await file.read()
-    if len(file_bytes) > MAX_FILE_SIZE_BYTES:
-        raise HTTPException(status_code=413, detail=f"File too large. Maximum size is {MAX_FILE_SIZE_MB}MB")
-    if len(file_bytes) == 0:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    contents = await file.read()
+    if len(contents) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large. Max is {MAX_FILE_SIZE_MB}MB")
+    if len(contents) == 0:
+        raise HTTPException(status_code=400, detail="empty file")
+
+    user_id = x_user_id or DEMO_USER_ID
+
     try:
-        document_id, chunks_stored = process_upload(
-            user_id=user_id,
-            filename=file.filename or "unnamed",
+        summary = ingest_document(
+            file_bytes=contents,
             content_type=file.content_type,
-            file_bytes=file_bytes,
+            filename=file.filename,
+            user_id=user_id,
         )
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload pipeline failed: {e}")
+
     return UploadResponse(
-        status="ok",
-        document_id=document_id,
-        filename=file.filename or "unnamed",
-        chunks_stored=chunks_stored,
+        status=summary.get("status", "ok"),
+        filename=file.filename,
+        user_id=user_id,
+        chunks_stored=summary.get("chunks_stored", 0),
+        stored_in=summary.get("stored_in", "memory"),
     )
