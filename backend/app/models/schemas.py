@@ -18,6 +18,9 @@ class AuthResponse(BaseModel):
     user_id: str
     access_token: str
 
+class OAuthResponse(BaseModel):
+    access_token: str
+
 
 # ── Autofill ──────────────────────────────────────────────────────────────────
 
