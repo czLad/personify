@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Personify",
@@ -11,11 +12,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <nav className="topnav">
-          <a href="/" className="brand">Personify</a>
+          <Link href="/" className="brand">Personify</Link>
           <div className="links">
-            <a href="/upload">Upload</a>
-            <a href="/history">History</a>
-            <a href="/settings">Settings</a>
+            <Link href="/upload">Upload</Link>
+            <Link href="/history">History</Link>
+            <Link href="/settings">Settings</Link>
           </div>
         </nav>
         <main className="container">{children}</main>

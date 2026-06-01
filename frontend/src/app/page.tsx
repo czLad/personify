@@ -24,8 +24,8 @@ export default function HomePage() {
       <div className="card">
         <h2>Get started</h2>
         <p style={{ marginBottom: 16, color: "var(--muted)", fontSize: 14 }}>
-          Upload your resume on the <a href="/upload" style={{ color: "var(--accent)" }}>Upload</a> page,
-          install the Chrome extension, and click "Autofill" on any job application.
+          Upload your resume on the <a href="/upload" style={{ color: "var(--accent)" }}>Upload</a> {" "}page,
+          install the Chrome extension, and click &quot;Autofill&quot; on any job application.
         </p>
         <button className="btn" onClick={ping}>Test backend connection</button>
         {status.msg && <p className={`status ${status.kind ?? ""}`}>{status.msg}</p>}

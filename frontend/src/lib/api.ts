@@ -5,6 +5,13 @@
 
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
+export type HistoryItem = {
+  company_name: string;
+  question: string;
+  generated_response: string;
+  created_at: string;
+};
+
 async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...init,
@@ -22,7 +29,7 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   health: () => jsonFetch<{ status: string; service: string }>("/health"),
 
-  history: () => jsonFetch<{ status: string; items: any[] }>("/history"),
+  history: () => jsonFetch<{ status: string; items: HistoryItem[] }>("/history"),
 
   upload: async (file: File) => {
     const fd = new FormData();
@@ -31,4 +38,4 @@ export const api = {
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   },
-};
+}

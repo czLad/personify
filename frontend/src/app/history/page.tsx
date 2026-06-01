@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api } from "@/lib/api";
+// import { api } from "@/lib/api";
+import { api, type HistoryItem } from "@/lib/api";
 
-type HistoryItem = {
-  company_name: string;
-  question: string;
-  generated_response: string;
-  created_at: string;
-};
+
+// type HistoryItem = {
+//   company_name: string;
+//   question: string;
+//   generated_response: string;
+//   created_at: string;
+// };
 
 export default function HistoryPage() {
   const [items, setItems] = useState<HistoryItem[]>([]);
