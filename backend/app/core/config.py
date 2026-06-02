@@ -14,14 +14,19 @@ class Settings(BaseSettings):
 
     # Gemini
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-2.5-flash"
 
     # CORS
-    cors_origins_raw: str = "http://localhost:3000"
+    # Comma-separated list of exact origins (e.g. the Next.js dashboard).
+    # The Chrome extension has a different ID per developer/reload, so it
+    # is matched by regex via `cors_origin_regex` below.
+    cors_origins: str = "http://localhost:3000"
+    cors_origin_regex: str = r"chrome-extension://.*"
 
     @property
-    def cors_origins(self) -> list[str]:
-        return [o.strip() for o in self.cors_origins_raw.split(",") if o.strip()]
+    def cors_origins_list(self) -> list[str]:
+        """Parse the comma-separated CORS_ORIGINS env var into a list."""
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 settings = Settings()
