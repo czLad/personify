@@ -2,7 +2,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.models.schemas import LoginRequest, SignupRequest, AuthResponse, OAuthResponse
-from supabase import create_client, Client
+from supabase import create_client
 from app.core.config import settings
 
 
@@ -35,6 +35,7 @@ def signup(payload: SignupRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
     # raise HTTPException(status_code=501, detail="signup not yet implemented")
 
 # If we go with Google, this will not be needed
@@ -77,3 +78,5 @@ def login_google():
         return OAuthResponse(access_token=response.session.access_token)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # raise HTTPException(status_code=501, detail="google login not yet implemented")
