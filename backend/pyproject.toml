@@ -1,0 +1,23 @@
+# Ruff configuration for the Personify backend.
+# We intentionally keep this lightweight so it doesn't churn the team's
+# work patterns. The goal is to catch real mistakes (unused imports,
+# obvious bugs, import order) without being draconian about style.
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+# E + W : pycodestyle errors / warnings
+# F     : pyflakes (unused imports, undefined names, etc.)
+# I     : isort (import sorting)
+select = ["E", "F", "W", "I"]
+ignore = [
+    # line-length is already configured above; the rule duplicates it.
+    "E501",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests intentionally import fixtures and helpers that may not be used in
+# every test function. Don't fail CI on that.
+"tests/*" = ["F401"]

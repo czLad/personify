@@ -1,23 +1,32 @@
 """
 Tests for the pipeline orchestration and the /autofill HTTP endpoint.
 
-These tests don't hit the real Gemini API. Classification is mocked out
-(it has its own test file). The pipeline tests focus on:
+Scope after the test-file split:
+  - HTTP wiring (/health, /, /autofill)
+  - Pipeline behavior:
+      * empty fields short-circuit
+      * user_id threading + DEMO_USER_ID fallback
+      * confidence threshold gates generation (Week 4 promise)
+      * prompt variant selection routes by question shape (Week 4 promise)
+  - Classification is mocked; the LLM is never called here.
 
-  - HTTP endpoint wiring (/health, /autofill, /upload)
-  - Pipeline correctly skips STANDARD fields
-  - user_id threading + DEMO_USER_ID fallback
-  - Graceful handling when GEMINI_API_KEY is absent
-  - End-to-end memory store population from /upload
+Upload-related tests live in test_upload.py; embedding-extraction tests
+live in test_embeddings.py.
 """
+from __future__ import annotations
+
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from app.models.schemas import FormField
 from app.services.classifier import FieldClassification
-from app.services.embeddings import _MEMORY_STORE, get_memory_store
-from app.services.pipeline import DEMO_USER_ID, run_autofill_pipeline
+from app.services.pipeline import (
+    DEMO_USER_ID,
+    MIN_CONFIDENCE,
+    _pick_prompt_variant,
+    run_autofill_pipeline,
+)
 from main import app
 
 client = TestClient(app)
@@ -36,7 +45,7 @@ def test_root():
     assert r.status_code == 200
 
 
-# ── /autofill HTTP endpoint (no Gemini key needed — placeholder text is fine) ─
+# ── /autofill HTTP endpoint (placeholder text is fine without API key) ────────
 
 def test_autofill_skips_standard_fields():
     """STANDARD fields should not get a generated response."""
@@ -55,8 +64,24 @@ def test_autofill_skips_standard_fields():
     assert body["meta"]["fields_filled"] == 0
 
 
-def test_autofill_targets_personal_statement_fields():
-    """PERSONAL_STATEMENT fields should get a response (placeholder if no API key)."""
+@patch("app.routers.autofill.run_autofill_pipeline")
+def test_autofill_targets_personal_statement_fields(mock_pipeline):
+    """
+    A confident PERSONAL_STATEMENT field should round-trip through the
+    HTTP layer correctly. We mock the pipeline so this test runs cleanly
+    even without a Gemini key — otherwise the live heuristic fallback
+    returns 0.6 confidence, which the new threshold gate correctly
+    blocks (see TestConfidenceThreshold below).
+    """
+    from app.models.schemas import FieldResponse
+    mock_pipeline.return_value = [
+        FieldResponse(
+            selector="#why",
+            response="I'm drawn to Notion because of its emphasis on craft.",
+            classification="PERSONAL_STATEMENT",
+        ),
+    ]
+
     r = client.post("/autofill", json={
         "fields": [
             {"selector": "#why", "label": "Why do you want to work at Notion?", "field_type": "textarea"},
@@ -72,6 +97,8 @@ def test_autofill_targets_personal_statement_fields():
     assert body["responses"][0]["classification"] == "PERSONAL_STATEMENT"
     assert isinstance(body["responses"][0]["response"], str)
     assert len(body["responses"][0]["response"]) > 0
+    assert body["meta"]["fields_received"] == 2
+    assert body["meta"]["fields_filled"] == 1
 
 
 # ── Pipeline function directly (classification mocked) ────────────────────────
@@ -95,7 +122,6 @@ def test_pipeline_uses_demo_user_when_no_user_id(mock_classify):
     with patch("app.services.pipeline.retrieve") as mock_retrieve:
         mock_retrieve.return_value = []
         run_autofill_pipeline(fields, "", "Notion")
-        # Confirm retrieve was called with the demo user, not None
         mock_retrieve.assert_called_once()
         assert mock_retrieve.call_args.kwargs["user_id"] == DEMO_USER_ID
 
@@ -114,70 +140,98 @@ def test_pipeline_passes_through_explicit_user_id(mock_classify):
         assert mock_retrieve.call_args.kwargs["user_id"] == "user-123"
 
 
-# ── /upload → memory store integration ───────────────────────────────────────
+# ── Confidence threshold (Week 4 promise) ─────────────────────────────────────
 
-def test_memory_store_is_populated_after_upload():
-    """Uploading a text file should populate the in-memory chunk store."""
-    _MEMORY_STORE.clear()
+class TestConfidenceThreshold:
+    """
+    Behavior contract:
+      * confidence >= MIN_CONFIDENCE → field gets a response
+      * confidence <  MIN_CONFIDENCE → field is silently skipped
+      * STANDARD fields are skipped regardless of confidence
+    """
 
-    sample_resume = (
-        "Min Phone Myat Zaw — UCLA Computer Science, expected 2027.\n\n"
-        "Experience: built a Chrome extension that uses a LangChain pipeline "
-        "to fill personal statement questions on job applications.\n\n"
-        "Skills: Python, JavaScript, FastAPI, React, LangChain, RAG."
-    ).encode("utf-8")
+    FIELDS = [
+        FormField(selector="#high", label="Why do you want to work here?", field_type="textarea"),
+        FormField(selector="#low",  label="Tell us anything else",          field_type="textarea"),
+        FormField(selector="#std",  label="Email address",                  field_type="text"),
+    ]
 
-    r = client.post(
-        "/upload",
-        files={"file": ("resume.txt", sample_resume, "text/plain")},
-    )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["chunks_stored"] >= 1
+    @patch("app.services.pipeline.retrieve", return_value=[])
+    @patch("app.services.pipeline.classify_fields")
+    def test_low_confidence_personal_statement_is_skipped(self, mock_classify, _retrieve):
+        mock_classify.return_value = [
+            FieldClassification(selector="#high", classification="PERSONAL_STATEMENT", confidence=0.95),
+            FieldClassification(selector="#low",  classification="PERSONAL_STATEMENT", confidence=0.55),
+            FieldClassification(selector="#std",  classification="STANDARD",           confidence=0.99),
+        ]
+        results = run_autofill_pipeline(self.FIELDS, "", "Notion")
+        selectors = [r.selector for r in results]
+        assert "#high" in selectors        # confident PS fills
+        assert "#low" not in selectors     # low-confidence PS is dropped
+        assert "#std" not in selectors     # standard fields always dropped
 
-    store = get_memory_store()
-    assert DEMO_USER_ID in store
-    assert len(store[DEMO_USER_ID]) >= 1
-    
-# ── /upload validation ────────────────────────────────────────────────────────
+    @patch("app.services.pipeline.retrieve", return_value=[])
+    @patch("app.services.pipeline.classify_fields")
+    def test_threshold_boundary_inclusive(self, mock_classify, _retrieve):
+        """Confidence == MIN_CONFIDENCE should pass (>= comparison)."""
+        mock_classify.return_value = [
+            FieldClassification(selector="#high", classification="PERSONAL_STATEMENT", confidence=MIN_CONFIDENCE),
+        ]
+        fields = [FormField(selector="#high", label="Why?", field_type="textarea")]
+        assert len(run_autofill_pipeline(fields, "", "")) == 1
 
-def test_upload_rejects_unsupported_type():
-    """An unsupported MIME type should return 415."""
-    r = client.post(
-        "/upload",
-        files={"file": ("resume.docx", b"fake docx bytes", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
-    )
-    assert r.status_code == 415
-    assert "Unsupported file type" in r.json()["detail"]
-
-
-def test_upload_rejects_empty_file():
-    """An empty file should return 400."""
-    r = client.post(
-        "/upload",
-        files={"file": ("resume.txt", b"", "text/plain")},
-    )
-    assert r.status_code == 400
-    assert "empty" in r.json()["detail"].lower()
-
-
-def test_upload_rejects_oversized_file():
-    """A file over 10MB should return 413."""
-    huge = b"x" * (11 * 1024 * 1024)  # 11MB
-    r = client.post(
-        "/upload",
-        files={"file": ("resume.txt", huge, "text/plain")},
-    )
-    assert r.status_code == 413
-    assert "too large" in r.json()["detail"].lower()
+    @patch("app.services.pipeline.retrieve", return_value=[])
+    @patch("app.services.pipeline.classify_fields")
+    def test_heuristic_fallback_confidence_is_blocked(self, mock_classify, _retrieve):
+        """
+        Heuristic classifier returns 0.6 — that's deliberately below
+        MIN_CONFIDENCE (0.7), so a heuristic-classified PS should NOT
+        get an essay. This is the safety guarantee from Week 4.
+        """
+        mock_classify.return_value = [
+            FieldClassification(selector="#a", classification="PERSONAL_STATEMENT", confidence=0.6),
+        ]
+        fields = [FormField(selector="#a", label="Tell us about a challenge", field_type="textarea")]
+        assert run_autofill_pipeline(fields, "", "") == []
 
 
-def test_upload_accepts_markdown():
-    """The allowlist includes text/markdown; should succeed."""
-    md_resume = b"# Min\n\nUCLA CS, building Personify."
-    r = client.post(
-        "/upload",
-        files={"file": ("resume.md", md_resume, "text/markdown")},
-    )
-    assert r.status_code == 200
-    assert r.json()["chunks_stored"] >= 1
+# ── Prompt variant selection (Week 4 promise) ─────────────────────────────────
+
+class TestPromptVariantSelection:
+    """
+    _pick_prompt_variant routes a question to one of three templates based
+    on lexical cues. The choice is deterministic so it can be tested
+    without ever hitting the LLM.
+    """
+
+    def test_motivation_variant_for_why_questions(self):
+        variant, _ = _pick_prompt_variant("Why do you want to work at Notion?")
+        assert variant == "motivation"
+
+    def test_motivation_variant_for_interested_in(self):
+        variant, _ = _pick_prompt_variant("What are you interested in about this role?")
+        assert variant == "motivation"
+
+    def test_story_variant_for_describe_a_time(self):
+        variant, _ = _pick_prompt_variant("Describe a time you faced a hard tradeoff.")
+        assert variant == "story"
+
+    def test_story_variant_for_tell_us_about_a_challenge(self):
+        variant, _ = _pick_prompt_variant("Tell us about a challenge you overcame.")
+        assert variant == "story"
+
+    def test_background_variant_for_open_ended(self):
+        # No "why"/"describe" cue → background bucket.
+        variant, _ = _pick_prompt_variant("Tell us about yourself.")
+        assert variant == "background"
+
+    def test_each_variant_has_distinct_template(self):
+        """Make sure the three templates aren't accidentally identical."""
+        _, t_mot = _pick_prompt_variant("Why this company?")
+        _, t_sto = _pick_prompt_variant("Describe a time when you led a team.")
+        _, t_bkg = _pick_prompt_variant("Anything else?")
+        assert t_mot != t_sto != t_bkg
+        # And all share the base scaffold placeholders.
+        for t in (t_mot, t_sto, t_bkg):
+            for placeholder in ("{company}", "{job_description}", "{context}", "{question}"):
+                assert placeholder in t

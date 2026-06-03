@@ -1,7 +1,6 @@
 """Pydantic schemas shared across routers and services."""
 from pydantic import BaseModel, Field
 
-
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
 class SignupRequest(BaseModel):

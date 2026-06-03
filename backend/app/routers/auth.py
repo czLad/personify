@@ -1,7 +1,7 @@
 """Authentication endpoints. Currently stubbed — to be implemented by Backend Core."""
 from fastapi import APIRouter, HTTPException
 
-from app.models.schemas import LoginRequest, SignupRequest, AuthResponse
+from app.models.schemas import AuthResponse, LoginRequest, SignupRequest
 
 router = APIRouter()
 

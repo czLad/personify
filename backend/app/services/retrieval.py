@@ -25,6 +25,8 @@ def _supabase_client():
     """Lazy import + construct so missing creds don't break module import."""
     if not (settings.supabase_url and settings.supabase_service_key):
         raise RuntimeError("Supabase not configured")
+    # Lazy: supabase package is heavy and unnecessary when running in
+    # the in-memory demo mode.
     from supabase import create_client
     return create_client(settings.supabase_url, settings.supabase_service_key)
 
@@ -33,28 +35,41 @@ def save_chunks_pgvector(
     user_id: str,
     chunks: list[str],
     embeddings: list[list[float]],
+    document_id: str | None = None,
 ) -> None:
     """
-    Replace this user's existing chunks with the new ones.
+    Persist chunks + embeddings to Supabase's document_chunks table.
 
-    Schema reference: supabase/migrations/0001_initial.sql, table document_chunks.
+    Design notes:
+    * Replaces any existing chunks for this user (re-uploading = replacing).
+      This is per our DECISIONS.md — a user has one active resume at a time.
+    * `document_id` is optional. When None, the chunk's document_id column
+      is left null (allowed by the schema). This is what happens during the
+      demo phase. Once Yousif's auth lands and ingest_document starts
+      passing a real UUID, every chunk row will be linked to its parent
+      `documents` row, which enables features like "delete this resume"
+      or "which resume did this chunk come from".
     """
     client = _supabase_client()
 
     # Wipe existing chunks for this user (re-uploading replaces, per ADR).
     client.table("document_chunks").delete().eq("user_id", user_id).execute()
 
-    rows = [
-        {
+    rows: list[dict] = []
+    for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
+        row: dict = {
             "user_id": user_id,
             "chunk_index": i,
             "content": chunk,
             "embedding": emb,
-            # document_id intentionally omitted; the schema allows null for now
-            # so the demo isn't blocked on Yousif wiring up the documents table.
         }
-        for i, (chunk, emb) in enumerate(zip(chunks, embeddings))
-    ]
+        # Only include document_id when we actually have one. Omitting the
+        # key (rather than sending null) keeps the supabase-py payload tidy
+        # and lets Postgres apply its DEFAULT if any.
+        if document_id is not None:
+            row["document_id"] = document_id
+        rows.append(row)
+
     if rows:
         client.table("document_chunks").insert(rows).execute()
 

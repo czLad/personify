@@ -1,27 +1,46 @@
 /**
  * Personify content script.
  *
- * Runs on supported job application portals. Responsible for:
- *   1. Scanning the DOM for form fields (Perceive)
- *   2. Sending those fields to the backend for classification + generation
- *   3. Pasting the generated responses into the right fields (Act)
+ * Runs in two host environments:
+ *   1. Inside the real Chrome extension on supported job portals
+ *      (Ashby, Greenhouse, Workday) — receives a chrome.runtime message
+ *      from the popup to trigger autofill.
+ *   2. Inside ai_tests/fake_job_page.html as a regular <script>
+ *      tag — used as a local smoke test for the field detection + paste
+ *      logic without needing to install the extension. The fake page
+ *      calls window.personifyRunAutofill() directly.
+ *
+ * Responsibilities:
+ *   1. Scan the DOM for form fields (Perceive)
+ *   2. Send those fields to the backend for classification + generation
+ *   3. Paste the generated responses into the right fields (Act)
  *
  * The intelligence (Decide) lives entirely in the backend. This script
  * never holds an API key and never calls an LLM directly.
  */
 
-const BACKEND_URL = "http://localhost:8000";
+// Backend URL can be overridden by the host page (e.g. the fake job page
+// uses this to point at a different port). Falls back to the default.
+function getBackendUrl() {
+  return (typeof window !== "undefined" && window.PERSONIFY_BACKEND_URL)
+    || "http://localhost:8000";
+}
 
 // ── Listen for "Autofill" trigger from popup ─────────────────────────────────
+// Guarded so the script can be loaded outside a Chrome extension context
+// (e.g. the fake job page). Without this guard, the file crashes on load
+// in a plain web page because `chrome` is undefined.
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === "AUTOFILL_TRIGGER") {
-    runAutofill()
-      .then((result) => sendResponse({ ok: true, result }))
-      .catch((err) => sendResponse({ ok: false, error: err.message }));
-    return true; // keep the message channel open for async response
-  }
-});
+if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type === "AUTOFILL_TRIGGER") {
+      runAutofill()
+        .then((result) => sendResponse({ ok: true, result }))
+        .catch((err) => sendResponse({ ok: false, error: err.message }));
+      return true; // keep the message channel open for async response
+    }
+  });
+}
 
 // ── 1. Perceive ──────────────────────────────────────────────────────────────
 
@@ -83,7 +102,7 @@ async function callBackend(fields) {
   const company = guessCompanyName();
   const jobDescription = scrapeJobDescription();
 
-  const res = await fetch(`${BACKEND_URL}/autofill`, {
+  const res = await fetch(`${getBackendUrl()}/autofill`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -166,5 +185,15 @@ async function runAutofill() {
     fields_detected: fields.length,
     fields_filled: filled,
     pipeline_meta: data.meta,
+    // Surface the per-field response array so the smoke-test UI can
+    // show what was generated for each selector. The real extension
+    // ignores this; only the fake page uses it.
+    responses: data.responses,
   };
+}
+
+// Expose for the fake job page (smoke test). The real extension calls
+// runAutofill() via chrome.runtime messaging instead.
+if (typeof window !== "undefined") {
+  window.personifyRunAutofill = runAutofill;
 }

@@ -3,23 +3,45 @@ Embeddings service.
 
 Handles two responsibilities:
   1. Extract raw text from an uploaded document (PDF or plain text).
-  2. Chunk that text and embed each chunk using Gemini's text-embedding model.
+  2. Chunk that text and embed each chunk using Gemini's embedding model.
 
 Embeddings are stored in two places depending on what is available:
-  - Supabase pgvector (production path) — handled by app.services.retrieval
+  - Supabase pgvector (production path) — via app.services.retrieval
   - In-memory dict (fallback for demo when Supabase isn't wired up yet)
 
-This dual path means the demo never breaks because Dev's pgvector setup
+This dual path means the demo never breaks because the Supabase setup
 isn't ready. The MLE work isn't blocked on infrastructure.
 
 Note on inline imports: heavy libs (google.generativeai, PyPDF2, supabase)
 are imported inside functions, not at the top. This keeps module load fast
-for tests that don't need them, and avoids a circular import with retrieval.py.
+for tests that don't need them, and avoids a circular import with
+retrieval.py.
+
+Note on the documents-table path (`_looks_like_uuid` + `_insert_documents_row`):
+The Supabase schema in supabase/migrations/0001_initial.sql ties both
+documents.user_id and document_chunks.user_id to auth.users(id) — i.e.
+they MUST be real UUIDs from Supabase Auth. Our demo uses the literal
+string "demo-user" which is not a UUID. So we auto-detect whether the
+current user_id looks like a UUID and only go down the full
+documents-table path when it does. This keeps demo flows working
+identically to today, and the Supabase path activates automatically
+once Yousif's auth middleware starts passing real auth.users UUIDs.
+
+Note on append-by-default ingestion (changed from the original ADR):
+The in-memory fallback used to wipe a user's chunks on every upload, so
+re-uploading replaced the old document. That broke the realistic case
+where a user uploads both a resume AND essays — the second upload
+would silently nuke the first. We now APPEND on every upload. Callers
+that want the old replace-on-upload behavior call clear_user_chunks()
+first. The Supabase path still replaces (inside save_chunks_pgvector)
+because that's where the production "one resume per auth.user"
+invariant lives.
 """
 from __future__ import annotations
 
 import io
 import logging
+import uuid
 from typing import Iterable
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -52,8 +74,8 @@ def extract_text(file_bytes: bytes, content_type: str | None, filename: str = ""
     """
     Extract plain text from an uploaded document.
 
-    Supports PDFs (via PyPDF2) and plain text. DOCX support can be added later
-    by a teammate — for the MVP demo, PDF is enough.
+    Supports PDFs (via PyPDF2) and plain text. DOCX support can be added
+    later — for the MVP demo, PDF and plain text are enough.
     """
     is_pdf = (
         (content_type and "pdf" in content_type.lower())
@@ -137,7 +159,7 @@ def embed_texts(texts: Iterable[str]) -> list[list[float]]:
         logger.warning("GEMINI_API_KEY missing — returning zero vectors")
         return [[0.0] * EMBEDDING_DIM for _ in text_list]
 
-    # Lazy: same reason as in _configure_gemini_once. Already cached after first call.
+    # Lazy: same reason as in _configure_gemini_once. Cached after first call.
     import google.generativeai as genai
 
     vectors: list[list[float]] = []
@@ -172,14 +194,106 @@ def embed_query(text: str) -> list[float]:
     return result["embedding"]
 
 
+# ── Helpers for the storage path ──────────────────────────────────────────────
+
+def _looks_like_uuid(s: str) -> bool:
+    """
+    True if `s` is a syntactically valid UUID.
+
+    Used to decide whether to attempt the Supabase `documents` table insert.
+    The schema requires user_id to be a real auth.users UUID; "demo-user"
+    fails that constraint and would error. Auto-detecting here means demo
+    flows keep working and real-auth flows activate transparently once
+    Yousif's middleware passes proper UUIDs.
+    """
+    try:
+        uuid.UUID(str(s))
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _supabase_configured() -> bool:
+    return bool(settings.supabase_url and settings.supabase_service_key)
+
+
+def _insert_documents_row(
+    user_id: str,
+    filename: str,
+    content_type: str | None,
+    document_id: str,
+) -> bool:
+    """
+    Insert a row into the `documents` table. Returns True on success, False
+    on any failure. Failure is logged but not raised — the caller falls
+    back to the chunks-only path so the user's upload still works.
+    """
+    try:
+        # Lazy: only load supabase if we actually have keys.
+        from supabase import create_client
+        client = create_client(settings.supabase_url, settings.supabase_service_key)
+        storage_path = f"uploads/{user_id}/{filename}"
+        client.table("documents").insert({
+            "id": document_id,
+            "user_id": user_id,
+            "filename": filename,
+            "content_type": content_type,
+            "storage_path": storage_path,
+        }).execute()
+        return True
+    except Exception as e:
+        logger.warning("documents insert failed (%s); falling back to chunks-only", e)
+        return False
+
+
+
+def clear_user_chunks(user_id: str) -> None:
+    """
+    Drop all of a user's chunks from the in-memory store.
+
+    Call this BEFORE ingest_document() when you want a new upload to
+    replace the user's existing chunks rather than append to them. The
+    fake job page does NOT call this — multi-document uploads should add
+    to context, not overwrite. A "delete my documents" button on the
+    dashboard would call this.
+
+    No-op on the Supabase/pgvector path — that path replaces inside
+    save_chunks_pgvector by design, matching the "one resume per
+    auth.user" production invariant.
+    """
+    _MEMORY_STORE.pop(user_id, None)
+
+
 # ── Ingestion (the function called from /upload) ──────────────────────────────
 
-def ingest_document(file_bytes: bytes, content_type: str | None, filename: str, user_id: str) -> dict:
+def ingest_document(
+    file_bytes: bytes,
+    content_type: str | None,
+    filename: str,
+    user_id: str,
+) -> dict:
     """
     End-to-end ingestion: extract → chunk → embed → store.
 
-    Stores in pgvector if Supabase is configured, otherwise stores in the
-    in-memory fallback. Returns a summary suitable for the /upload response.
+    Storage strategy (chosen automatically based on environment):
+
+      1. Supabase configured AND user_id is a real UUID:
+         → insert a documents row, then save chunks linked to it.
+         → returns stored_in="supabase" and includes document_id.
+
+      2. Supabase configured but user_id is NOT a UUID (e.g. "demo-user"):
+         → skip the documents row (would violate the auth.users FK),
+           call save_chunks_pgvector(document_id=None) which is allowed
+           by the schema.
+         → returns stored_in="pgvector".
+
+      3. Supabase NOT configured, or save raises for any reason:
+         → fall back to the in-memory store.
+         → returns stored_in="memory".
+
+    This keeps demo flows identical to today (path 3 in most local setups)
+    while letting the production path light up the moment Yousif's auth
+    starts handing the pipeline real Supabase auth.users UUIDs.
     """
     text = extract_text(file_bytes, content_type, filename)
     if not text:
@@ -188,27 +302,54 @@ def ingest_document(file_bytes: bytes, content_type: str | None, filename: str, 
     chunks = chunk_text(text)
     embeddings = embed_texts(chunks)
 
-    # Try to persist in pgvector; fall back to memory.
+    document_id: str | None = None
     stored_in = "memory"
-    try:
-        # Lazy: avoids a circular import. retrieval.py imports from this file too.
-        from app.services.retrieval import save_chunks_pgvector
-        save_chunks_pgvector(user_id=user_id, chunks=chunks, embeddings=embeddings)
-        stored_in = "pgvector"
-    except Exception as e:
-        logger.info("pgvector save failed (%s) — using in-memory fallback", e)
-        _MEMORY_STORE.setdefault(user_id, []).clear()
-        _MEMORY_STORE[user_id].extend(zip(chunks, embeddings))
+
+    # ── Path 1 / 2: try pgvector ─────────────────────────────────────────────
+    if _supabase_configured():
+        if _looks_like_uuid(user_id):
+            document_id = str(uuid.uuid4())
+            inserted = _insert_documents_row(user_id, filename, content_type, document_id)
+            if not inserted:
+                # Drop back to chunks-only — at least retrieval will work.
+                document_id = None
+
+        try:
+            # Lazy: avoids a circular import; retrieval.py imports from us too.
+            from app.services.retrieval import save_chunks_pgvector
+            save_chunks_pgvector(
+                user_id=user_id,
+                chunks=chunks,
+                embeddings=embeddings,
+                document_id=document_id,
+            )
+            stored_in = "supabase" if document_id else "pgvector"
+        except Exception as e:
+            logger.info("pgvector save failed (%s) — using in-memory fallback", e)
+            stored_in = "memory"
+            document_id = None  # No DB row → don't lie about having one.
+
+    # ── Path 3: in-memory fallback (APPENDS — does not replace) ─────────────
+    # Previously this path called .clear() on every upload so re-uploading
+    # a resume replaced the old one. That broke the realistic case where
+    # a user uploads a resume AND essays: the second upload nuked the
+    # first. We now APPEND. Callers who want the old "replace" behavior
+    # should call clear_user_chunks(user_id) explicitly first.
+    if stored_in == "memory":
+        _MEMORY_STORE.setdefault(user_id, []).extend(zip(chunks, embeddings))
 
     # ─────────────────────────────────────────────────────────────────────────
-    # FUTURE (Dev's path): once auth provides real UUIDs and Supabase is wired,
-    # uncomment to also persist a `documents` table row and link chunks to it.
-    # This is the production path; the block above is the demo path.
+    # REFERENCE: original Dev path, kept here as a flat "this is what the
+    # auto-detected supabase branch above is doing under the hood" explainer.
+    # The live logic above already does all of this — auto-detecting whether
+    # to take the demo path or the Supabase path based on the runtime
+    # environment. Don't uncomment this block; it would double-insert.
     #
-    # Requires:
-    #   - settings.supabase_url and settings.supabase_service_key set in .env
-    #   - user_id is a real auth.users UUID (not "demo-user")
-    #   - migrations 0001_initial.sql and 0002_match_chunks_rpc.sql applied
+    # Kept for two reasons:
+    #   1. Future you debugging "why is there a documents row but no chunks
+    #      linked to it?" can read this and see the intended shape.
+    #   2. If we ever decide to make the Supabase path opt-in via an env
+    #      flag instead of auto-detection, this is the recipe to copy.
     #
     # import uuid
     # from supabase import create_client  # lazy: only load if Supabase is configured
@@ -227,10 +368,9 @@ def ingest_document(file_bytes: bytes, content_type: str | None, filename: str, 
     #             "storage_path": storage_path,
     #         }).execute()
     #
-    #         # Re-insert chunks with the document_id so they link back to the file.
-    #         # save_chunks_pgvector above wrote chunks without a document_id;
-    #         # to use this block, refactor save_chunks_pgvector to accept document_id
-    #         # or call supabase.table("document_chunks").update(...) here.
+    #         # save_chunks_pgvector now accepts an optional document_id so
+    #         # the chunks insert can be linked to this documents row in a
+    #         # single call rather than needing a follow-up UPDATE.
     #         logger.info("Stored document %s with %d chunks for user %s",
     #                     document_id, len(chunks), user_id)
     #
@@ -245,12 +385,15 @@ def ingest_document(file_bytes: bytes, content_type: str | None, filename: str, 
     #         logger.warning("Supabase document insert failed: %s", e)
     # ─────────────────────────────────────────────────────────────────────────
 
-    return {
+    summary: dict = {
         "status": "ok",
         "chunks_stored": len(chunks),
         "stored_in": stored_in,
         "preview": chunks[0][:200] if chunks else "",
     }
+    if document_id is not None:
+        summary["document_id"] = document_id
+    return summary
 
 
 def get_memory_store() -> dict[str, list[tuple[str, list[float]]]]:

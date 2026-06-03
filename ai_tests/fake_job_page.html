@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Open Application | Notion</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #fafaf7;
+      --surface: #ffffff;
+      --border: #e6e3da;
+      --ink: #1b1b1a;
+      --muted: #6b6862;
+      --accent: #2e2c29;
+      --accent-soft: #f3f1ea;
+      --good: #2f7a4f;
+      --warn: #b8762a;
+      --bad: #b22e2e;
+      --code: #f5f3ec;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.5;
+      font-size: 15px;
+    }
+    .page { max-width: 880px; margin: 0 auto; padding: 32px 24px 80px; }
+    header.brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    .brand-mark {
+      width: 36px; height: 36px;
+      background: var(--ink);
+      color: white;
+      border-radius: 6px;
+      display: grid; place-items: center;
+      font-weight: 700;
+      font-size: 18px;
+    }
+    h1 { font-size: 28px; margin: 0 0 4px 0; font-weight: 600; }
+    h2 { font-size: 20px; margin: 32px 0 12px; font-weight: 600; }
+    .role { color: var(--muted); font-size: 14px; }
+
+    section.card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .description { color: var(--ink); }
+    .description p { margin: 0 0 10px; }
+
+    label.field {
+      display: block;
+      margin: 16px 0;
+    }
+    label.field .label-text {
+      display: block;
+      font-weight: 500;
+      margin-bottom: 6px;
+    }
+    .hint { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    textarea, input[type=text] {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      font-family: inherit;
+      font-size: 14px;
+      background: white;
+      resize: vertical;
+    }
+    textarea { min-height: 140px; }
+    textarea:focus, input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+    /* ── Smoke test control panel — clearly distinct from the fake form ── */
+    .control {
+      position: sticky;
+      top: 0;
+      z-index: 5;
+      background: var(--accent-soft);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 18px;
+      margin-bottom: 24px;
+      font-size: 14px;
+    }
+    .control h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .control-row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .control-row:last-child { margin-bottom: 0; }
+    .control button {
+      border: 1px solid var(--ink);
+      background: var(--ink);
+      color: white;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .control button.secondary {
+      background: white;
+      color: var(--ink);
+    }
+    .control button:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .control input[type=text] {
+      flex: 0 1 280px;
+      font-size: 13px;
+      padding: 7px 10px;
+    }
+    .control input[type=file] { font-size: 13px; }
+    .control .upload-label {
+      display: inline-flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .control .upload-label .upload-label-text {
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+    #status {
+      margin-top: 4px;
+      padding: 10px 12px;
+      border-radius: 6px;
+      background: white;
+      border: 1px solid var(--border);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12.5px;
+      white-space: pre-wrap;
+      color: var(--muted);
+      min-height: 32px;
+    }
+    #status .ok   { color: var(--good); }
+    #status .warn { color: var(--warn); }
+    #status .bad  { color: var(--bad); }
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <header class="brand">
+      <div class="brand-mark">N</div>
+      <div>
+        <h1>Open Application</h1>
+        <div class="role">Notion · Software Engineer, AI Tooling</div>
+      </div>
+    </header>
+
+    <!-- ── Smoke test control panel ─────────────────────────────────────── -->
+    <section class="control">
+      <h3>Personify smoke test</h3>
+
+      <div class="control-row">
+        <label>Backend URL:&nbsp;
+          <input id="backend-url" type="text" value="http://localhost:8001" />
+        </label>
+        <button id="ping-btn" class="secondary" type="button">Test backend</button>
+      </div>
+
+      <!--
+        Two separate file inputs, one per document role. The backend
+        doesn't distinguish — both go through /upload the same way and
+        get appended to the user's chunk store. The split exists for UX
+        clarity: it makes "resume + essays" the obvious thing to upload
+        and prevents accidentally putting only one in.
+      -->
+      <div class="control-row">
+        <label class="upload-label">
+          <span class="upload-label-text">Resume (single)</span>
+          <input id="resume-input" type="file" accept=".pdf,.txt,.md" />
+        </label>
+        <label class="upload-label">
+          <span class="upload-label-text">Essays (one or more)</span>
+          <input id="essay-input" type="file" accept=".pdf,.txt,.md" multiple />
+        </label>
+      </div>
+
+      <div class="control-row">
+        <button id="upload-btn" type="button">Upload documents</button>
+        <button id="run-btn" type="button" disabled>Run Personify</button>
+        <button id="reset-btn" class="secondary" type="button">Reset answers</button>
+      </div>
+
+      <div id="status">Ready. Start the backend, then upload a resume and/or essays to enable Run Personify.</div>
+    </section>
+
+    <!-- ── Mock job description (so scrapeJobDescription finds something) ── -->
+    <section class="card description">
+      <h2>About the role</h2>
+      <p>
+        Notion is building tools for thought — collaborative software for
+        writing, planning, and organizing knowledge. We are hiring engineers
+        who care about polish, performance, and the feel of products. You'll
+        work on the AI features that make Notion adapt to how each person
+        thinks, with a heavy emphasis on retrieval-augmented generation,
+        prompt design, and latency.
+      </p>
+      <p>
+        We value engineers who can move between systems work, ML
+        infrastructure, and product detail. The team is small enough that
+        what you build will ship.
+      </p>
+    </section>
+
+    <!-- ── Fake application form ─────────────────────────────────────────── -->
+    <section class="card">
+      <h2>Application</h2>
+      <form id="application">
+
+        <label class="field" for="q-why">
+          <span class="label-text">Why do you want to work at Notion?</span>
+          <textarea id="q-why" name="q-why" placeholder="Your answer..."></textarea>
+          <div class="hint">Expected variant: <em>motivation</em></div>
+        </label>
+
+        <label class="field" for="q-tradeoff">
+          <span class="label-text">Describe a time when you had to make a hard technical tradeoff.</span>
+          <textarea id="q-tradeoff" name="q-tradeoff" placeholder="Your answer..."></textarea>
+          <div class="hint">Expected variant: <em>story</em></div>
+        </label>
+
+        <label class="field" for="q-about">
+          <span class="label-text">Tell us about yourself and what you care about.</span>
+          <textarea id="q-about" name="q-about" placeholder="Your answer..."></textarea>
+          <div class="hint">Expected variant: <em>background</em></div>
+        </label>
+
+        <label class="field" for="q-email">
+          <span class="label-text">Email address</span>
+          <input id="q-email" type="text" placeholder="you@example.com" />
+          <div class="hint">Expected behavior: classified as STANDARD and skipped.</div>
+        </label>
+      </form>
+    </section>
+
+  </div>
+
+  <!--
+    Order matters: the runner script needs to set window.PERSONIFY_BACKEND_URL
+    before content_script.js reads it. So we load the runner FIRST (it just
+    wires the buttons; it doesn't call anything yet) and then content_script.js.
+    The runner then reads window.personifyRunAutofill() that content_script.js
+    exported when it loaded.
+  -->
+  <script src="fake_job_runner.js"></script>
+  <script src="../extension/src/content_script.js"></script>
+</body>
+</html>
