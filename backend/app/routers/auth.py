@@ -3,13 +3,13 @@ from fastapi import APIRouter, HTTPException
 
 from app.models.schemas import LoginRequest, SignupRequest, AuthResponse, OAuthResponse
 from supabase import create_client, Client
+from app.core.config import settings
 
 
 router = APIRouter()
 # Can be replaced with data from .env.example?
-SUPABASE_URL = "https://test.supabase.co"
-SUPABASE_KEY = "public-anonymous-key"
-supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+supabase_client = create_client(settings.supabase_url, settings.anon_key)
 
 # If we go with Google, this will not be needed
 @router.post("/signup", response_model=AuthResponse)
