@@ -120,6 +120,25 @@ We currently use:
 If you change the embedding model, also update the migration's
 `vector(N)` size.
 
+### 8. Retrieval uses a boosted query (Week 7)
+`retrieve()` does NOT just embed the bare question. The query string fed
+to `embed_query` is the question concatenated with the company name and
+a truncated job description (see `retrieval._build_query`). Why: resumes
+describe outputs ("Built X using Y") while essays describe decisions
+("I chose A over B"), so on technical questions essay chunks naturally
+win on semantic similarity. The boost adds role-specific vocabulary to
+the query so resume chunks compete on their actual content.
+
+Two knobs to know:
+* `pipeline.RETRIEVAL_K` (default 4) — how many chunks per question.
+* `retrieval._JOB_DESCRIPTION_BUDGET` (default 200) — how many chars of
+  the job description get folded in before truncation. The question
+  must stay the dominant signal in the embedding.
+
+If you change either, also re-tune the other. Larger k with a larger
+budget = more diverse but more diluted context. Tests for both live in
+`test_pipeline.py::TestQueryBoost` and `::TestBuildQuery`.
+
 ## Common tasks
 
 ### Run the test suite locally
@@ -195,3 +214,5 @@ something, the codebase needs to back it up — that's why this file's
 - Week 4: Confidence threshold ✓, prompt variations ✓, pinned deps ✓
 - Week 5: Code review pass ✓, end-to-end real-Gemini test ✓
 - Week 6: Interface spec in repo ✓ (`docs/INTERFACE_SPEC.md`)
+- Week 7: Query boost (company + job description folded into the
+  embedding query) ✓ — see `retrieval._build_query`.

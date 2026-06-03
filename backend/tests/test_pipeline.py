@@ -8,6 +8,8 @@ Scope after the test-file split:
       * user_id threading + DEMO_USER_ID fallback
       * confidence threshold gates generation (Week 4 promise)
       * prompt variant selection routes by question shape (Week 4 promise)
+      * query boost threads company + job description into retrieve (Week 7)
+      * _build_query string construction (Week 7)
   - Classification is mocked; the LLM is never called here.
 
 Upload-related tests live in test_upload.py; embedding-extraction tests
@@ -24,9 +26,11 @@ from app.services.classifier import FieldClassification
 from app.services.pipeline import (
     DEMO_USER_ID,
     MIN_CONFIDENCE,
+    RETRIEVAL_K,
     _pick_prompt_variant,
     run_autofill_pipeline,
 )
+from app.services.retrieval import _build_query
 from main import app
 
 client = TestClient(app)
@@ -235,3 +239,113 @@ class TestPromptVariantSelection:
         for t in (t_mot, t_sto, t_bkg):
             for placeholder in ("{company}", "{job_description}", "{context}", "{question}"):
                 assert placeholder in t
+
+
+# ── Query boost (Week 7 promise) ──────────────────────────────────────────────
+
+class TestQueryBoost:
+    """
+    Pipeline-level contract: when run_autofill_pipeline is given a company
+    name and job description, those values must reach retrieve() so the
+    embedding query can include role context. This addresses the failure
+    mode where technical resume chunks score below narrative essay chunks
+    because they don't share decision-language vocabulary.
+
+    See retrieval._build_query for how the boost is constructed; the
+    pure-string tests for that live in TestBuildQuery below.
+    """
+
+    FIELDS = [FormField(selector="#q1", label="Why this role?", field_type="textarea")]
+
+    def _confident_classification(self):
+        return [
+            FieldClassification(
+                selector="#q1",
+                classification="PERSONAL_STATEMENT",
+                confidence=0.9,
+            ),
+        ]
+
+    @patch("app.services.pipeline.retrieve", return_value=[])
+    @patch("app.services.pipeline.classify_fields")
+    def test_company_threaded_to_retrieve(self, mock_classify, mock_retrieve):
+        mock_classify.return_value = self._confident_classification()
+        run_autofill_pipeline(
+            self.FIELDS,
+            job_description="",
+            company_name="Notion",
+        )
+        assert mock_retrieve.call_args.kwargs["company"] == "Notion"
+
+    @patch("app.services.pipeline.retrieve", return_value=[])
+    @patch("app.services.pipeline.classify_fields")
+    def test_job_description_threaded_to_retrieve(self, mock_classify, mock_retrieve):
+        mock_classify.return_value = self._confident_classification()
+        run_autofill_pipeline(
+            self.FIELDS,
+            job_description="Building AI tooling for collaborative software with RAG.",
+            company_name="Notion",
+        )
+        jd = mock_retrieve.call_args.kwargs["job_description"]
+        assert "RAG" in jd
+        assert "AI tooling" in jd
+
+    @patch("app.services.pipeline.retrieve", return_value=[])
+    @patch("app.services.pipeline.classify_fields")
+    def test_empty_company_and_job_become_empty_strings(self, mock_classify, mock_retrieve):
+        """
+        When the caller doesn't have a company/job (e.g. extension couldn't
+        scrape them), retrieve still gets called — with empty strings, not
+        None — so _build_query can fall through to question-only behavior.
+        """
+        mock_classify.return_value = self._confident_classification()
+        run_autofill_pipeline(self.FIELDS, job_description="", company_name="")
+        assert mock_retrieve.call_args.kwargs["company"] == ""
+        assert mock_retrieve.call_args.kwargs["job_description"] == ""
+
+    @patch("app.services.pipeline.retrieve", return_value=[])
+    @patch("app.services.pipeline.classify_fields")
+    def test_retrieval_k_is_used(self, mock_classify, mock_retrieve):
+        """The pipeline should retrieve RETRIEVAL_K chunks, not the legacy 3."""
+        mock_classify.return_value = self._confident_classification()
+        run_autofill_pipeline(self.FIELDS, job_description="", company_name="Notion")
+        assert mock_retrieve.call_args.kwargs["k"] == RETRIEVAL_K
+
+
+class TestBuildQuery:
+    """
+    Pure-string unit tests for _build_query. No LLM, no embedder, no I/O.
+    The boost is the line where retrieval quality is won or lost, so we
+    pin its behavior here.
+    """
+
+    def test_question_only_when_company_and_job_empty(self):
+        assert _build_query("Why?", "", "") == "Why?"
+
+    def test_company_appended_after_question(self):
+        q = _build_query("Why?", "Notion", "")
+        assert q.startswith("Why?")
+        assert "Notion" in q
+
+    def test_job_description_truncated_to_budget(self):
+        """A 1000-char job description should be cut to the 200-char budget."""
+        long_jd = "a" * 1000
+        q = _build_query("Why?", "", long_jd)
+        # The "a" run in the result should be exactly _JOB_DESCRIPTION_BUDGET long.
+        assert q.count("a") == 200
+
+    def test_all_three_components_included(self):
+        q = _build_query(
+            "Why this role?",
+            "Notion",
+            "RAG and real-time AI features.",
+        )
+        assert "Why this role?" in q
+        assert "Notion" in q
+        assert "RAG" in q
+
+    def test_handles_whitespace_in_inputs(self):
+        """Stray whitespace in inputs shouldn't produce double spaces."""
+        q = _build_query("Why?  ", "  Notion  ", "  Some JD  ")
+        # No double-space runs (the boost components were stripped before join).
+        assert "  " not in q

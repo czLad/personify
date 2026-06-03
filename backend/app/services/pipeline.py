@@ -29,6 +29,15 @@ Design notes:
   (regex on the question) so the choice is reproducible and testable
   without mocking the LLM.
 
+* Query boost (Week 7): the company name and job description are passed
+  to retrieve() so the embedding query reflects the role, not just the
+  question. This addresses the failure mode where resume chunks ("Built
+  X using Y") lose to narrative essay chunks ("I chose A over B") on
+  technical questions because they don't share decision-language
+  vocabulary. By adding role-specific terms to the query, technical
+  resume chunks become competitive on their actual content. See
+  retrieval._build_query for the construction.
+
 * The variant name is exposed in the FieldResponse.meta-ish way via the
   `_pick_prompt_variant` return tuple so tests can assert the right
   variant was chosen for a given question.
@@ -54,6 +63,17 @@ logger = logging.getLogger(__name__)
 # LLM classifications are typically 0.85+ when confident, 0.5–0.7 when
 # guessing, which is exactly the line we want to draw.
 MIN_CONFIDENCE: float = 0.7
+
+# How many chunks to retrieve per question.
+#
+# Tuned for our resume+essays corpus shape (~30 chunks total per user
+# during the demo). At k=3 a single dominant topic in the essays can
+# crowd out resume content entirely. At k=6+ the context window starts
+# carrying marginal-relevance chunks that dilute the prompt. 4 gives
+# the LLM enough breadth to mix resume facts with essay narrative
+# without overwhelming it. Tune alongside _JOB_DESCRIPTION_BUDGET in
+# retrieval.py if you change the chunk size.
+RETRIEVAL_K: int = 4
 
 # Used when no auth/user_id is supplied. Real auth (Yousif's work) will
 # supply a proper UUID; this keeps the demo working in the meantime.
@@ -264,9 +284,20 @@ def run_autofill_pipeline(
             continue
 
         # ── Step 2: Retrieve ──────────────────────────────────────────────────
-        context_chunks = retrieve(question=field.label, user_id=user_id, k=3)
-        logger.info("RETRIEVED for %r:\n%s", field.label,
-            "\n---\n".join(c[:120] for c in context_chunks))
+        # Query boost: pass company + job description so the embedding
+        # query carries role-specific vocabulary. See retrieval._build_query.
+        context_chunks = retrieve(
+            question=field.label,
+            user_id=user_id,
+            k=RETRIEVAL_K,
+            company=company_name or "",
+            job_description=job_description or "",
+        )
+        logger.info(
+            "RETRIEVED for %r:\n%s",
+            field.label,
+            "\n---\n".join(c[:120] for c in context_chunks),
+        )
 
         # ── Step 3: Generate ──────────────────────────────────────────────────
         text, variant_name = _generate_response(

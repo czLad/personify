@@ -92,8 +92,14 @@ For each field, the server:
    pasting essays into ambiguous fields. Heuristic-fallback results sit
    at 0.6 by design, so when the LLM is unavailable the server is
    intentionally conservative and skips rather than guess.
-3. **Retrieves** the top-3 most relevant chunks from the user's uploaded
-   resume/essays via RAG (pgvector if configured, in-memory otherwise).
+3. **Retrieves** the top-`k` most relevant chunks (default `k=4`) from
+   the user's uploaded resume/essays via RAG (pgvector if configured,
+   in-memory otherwise). The embedding query is **not** just the field's
+   question — it is the question concatenated with `company_name` and a
+   truncated slice of `job_description` (200 chars). This gives technical
+   resume chunks a fair chance against narrative essay chunks on
+   role-specific questions. The boost is internal and the request shape
+   is unchanged.
 4. **Generates** a ~100 word response using one of three prompt variants
    selected by lexical cues in the question:
    - `motivation` — matches "why...", "what excites...", "interested in"
