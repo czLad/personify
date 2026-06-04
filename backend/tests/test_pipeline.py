@@ -11,7 +11,7 @@ Scope:
       * query boost threads company + job description into retrieve
       * MMR cross-question diversity — used embeddings accumulate
         across the field loop and are passed as `penalize`
-      * MMR scoring math at the retrieve() boundary 
+      * MMR scoring math at the retrieve() boundary
       * _build_query string construction
   - Classification is mocked; the LLM is never called here.
 
