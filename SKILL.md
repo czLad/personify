@@ -139,6 +139,98 @@ If you change either, also re-tune the other. Larger k with a larger
 budget = more diverse but more diluted context. Tests for both live in
 `test_pipeline.py::TestQueryBoost` and `::TestBuildQuery`.
 
+### 9. Retrieval applies cross-question MMR (Week 7)
+On a single autofill batch, the same chunk (or another chunk from the
+same experience) tends to win for multiple questions — Q1 and Q2 both
+get the NASA story, Q3 too. We adapt **Maximum Marginal Relevance**
+(Carbonell & Goldstein, 1998) across questions: chunks already used in
+this batch are penalized when scoring candidates for later ones.
+
+Implementation: `pipeline.run_autofill_pipeline` keeps a `used_embeddings`
+list across its field loop and passes it as `penalize` to each `retrieve()`
+call. `retrieval._retrieve_memory_mmr` subtracts
+`penalty_weight · max_sim(candidate, penalize)` from each candidate's
+query similarity before ranking. See module docstring of `retrieval.py`
+for the formula and its relationship to classical MMR's λ.
+
+Two knobs:
+* `pipeline.MMR_PENALTY_WEIGHT` (default 0.4) — diversity bias. Plays
+  the role of `(1 − λ)` in classical MMR. Higher → stronger diversity;
+  0 → off (pure relevance).
+* `pipeline.GENERATION_TEMPERATURE` (default 0.65) — tuned through
+  several iterations. 0.7 ignored structural rules; 0.5 followed them
+  but produced staccato prose with no narrative connective tissue;
+  0.65 strikes a balance. If essays drift back toward generic
+  promotional language, drop to 0.6 before going lower.
+
+Important: the **pgvector path does NOT apply MMR yet** (the current
+SQL RPC doesn't return embeddings). When promoting pgvector, see the
+commented-out `_retrieve_pgvector_mmr` sketch in `retrieval.py` for the
+migration path. The in-memory demo path is fully MMR-enabled.
+
+Tests live in `test_pipeline.py::TestMMRDeduplicationPipeline` (plumbing)
+and `::TestMMRScoring` (math).
+
+### 10. Prompt templates are hard-ruled (Week 7)
+Each variant template in `pipeline.py` enforces several rules in
+`_BASE_INSTRUCTIONS`:
+* **Persona**: opens with "you are a thoughtful applicant writing in
+  your own voice." Frames the LLM as a person speaking, not a marketing
+  copywriter. Added after the first prompt rewrite produced staccato
+  bullet-style essays.
+* **Concrete-detail requirement**: every response must reference ≥2
+  specific items from the resume excerpts (project name, technology,
+  place, number, named experience). Kills generic-glue filler like
+  "I'm passionate about optimal algorithm design."
+* **Sentence-rhythm rule**: most sentences between 8 and 25 words. Bans
+  both run-on compound sentences (the pre-Week-7 failure mode) and
+  choppy 5-word fragments (the over-correction). Aims for a rhythm a
+  recruiter could read aloud.
+* **Subtle-alignment + no-cliché-closer guard**: blocklist on glue
+  phrases ("aligns with", "I'm drawn to") AND on promotional closers
+  ("I am eager to contribute", "impactful software that ships"). Ban
+  on verbatim quoting of the job description. The model otherwise
+  substitutes one cliché for another.
+* **Aspiration guard**: phrasings like "I would like to" or "I hope to"
+  in the corpus are NOT to be claimed as completed experiences. This
+  prevents leakage from aspirational essay content (e.g. "I would like
+  to engage with PAC at Stanford" being reported as actual work).
+
+Variant-specific (length ranges chosen to fit the shape of each
+question type; explicit anti-padding instruction in each template):
+* `motivation`: 110–150 words, target ~130, single paragraph. Shows a
+  concrete detail first; the body draws an **explicit bridge** from
+  that experience to a value, technical direction, or product theme
+  stated in the job description (without quoting it verbatim and
+  without naming the company). The company name appears only in the
+  final sentence, at most. This is the variant where the
+  applicant→company alignment has to be made legible; the other two
+  variants stay focused on the applicant.
+* `story`: 150–210 words, target ~180, one or two paragraphs. Opens
+  with scene-setting (project, role, stakes) for 1–2 sentences, then
+  decision → result → learning. Does NOT name the company.
+* `background`: 130–180 words, target ~150, one or two paragraphs.
+  Opens with a moment/person/experience, ends on a forward-looking
+  note. Does NOT name the company.
+
+Paragraph breaks: a single break is permitted in any variant when the
+response has two distinct beats (past → present, decision → reflection,
+etc.). Stay in one paragraph otherwise. No headings, no bullet points.
+
+If you tweak these, also bump `GENERATION_TEMPERATURE` if needed. The
+LLM ignores structural rules at higher temperatures and produces
+staccato prose at lower ones.
+
+### 11. PDF text gets normalized at ingestion (Week 7 fix)
+`embeddings.extract_text` collapses runs of whitespace into single
+spaces before returning. PyPDF2 on LaTeX-generated PDFs (like Min's
+resume) can return text with every word on its own line, which made
+both retrieval logs unreadable and the chunks Gemini saw look bizarre.
+The chunker still splits cleanly via its sentence/word fallback
+separators. If you ever need paragraph-aware chunking back, this is
+the place to revisit — keep `\n\n` paragraph breaks and only normalize
+intra-paragraph whitespace.
+
 ## Common tasks
 
 ### Run the test suite locally
@@ -215,4 +307,10 @@ something, the codebase needs to back it up — that's why this file's
 - Week 5: Code review pass ✓, end-to-end real-Gemini test ✓
 - Week 6: Interface spec in repo ✓ (`docs/INTERFACE_SPEC.md`)
 - Week 7: Query boost (company + job description folded into the
-  embedding query) ✓ — see `retrieval._build_query`.
+  embedding query) ✓ — see `retrieval._build_query`. Cross-question MMR
+  diversity ✓ — see `retrieval._retrieve_memory_mmr` and the
+  `MMR_PENALTY_WEIGHT` constant. Prompt rewrite for show-then-state,
+  short sentences, subtle alignment, and concrete-detail requirement ✓
+  — see `pipeline._BASE_INSTRUCTIONS` and the three variant templates.
+  INFO-level logging enabled at app startup ✓ (`main.py`) plus per-field
+  prompt logging in `pipeline._generate_response`.

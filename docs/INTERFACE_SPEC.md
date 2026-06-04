@@ -3,8 +3,8 @@
 This document is the source-of-truth contract between the Chrome extension
 and the backend pipeline. The frontend dashboard does not use this
 endpoint; it talks to `/upload`, `/history`, and `/health` only.
-
-Promised in Week 6 weekly report. Companion spec for `/upload` is
+ 
+Companion spec for `/upload` is
 inlined in the docstring of `app/routers/upload.py`.
 
 ---
@@ -94,12 +94,20 @@ For each field, the server:
    intentionally conservative and skips rather than guess.
 3. **Retrieves** the top-`k` most relevant chunks (default `k=4`) from
    the user's uploaded resume/essays via RAG (pgvector if configured,
-   in-memory otherwise). The embedding query is **not** just the field's
-   question — it is the question concatenated with `company_name` and a
-   truncated slice of `job_description` (200 chars). This gives technical
-   resume chunks a fair chance against narrative essay chunks on
-   role-specific questions. The boost is internal and the request shape
-   is unchanged.
+   in-memory otherwise). Two diversity layers are applied internally:
+   * **Query boost.** The embedding query is the question concatenated
+     with `company_name` and a truncated slice of `job_description`
+     (200 chars). This gives technical resume chunks a fair chance
+     against narrative essay chunks on job-specific questions.
+   * **Cross-question MMR.** Across questions in the same autofill
+     batch, chunks already used for an earlier question are penalized
+     when scoring candidates for later ones (adapted from Carbonell &
+     Goldstein 1998). The user gets different experiences across an
+     application rather than the same story restated three ways.
+
+   Both are internal and the request shape is unchanged. MMR is active
+   on the in-memory path; the pgvector path skips it until the SQL RPC
+   is upgraded to return chunk embeddings.
 4. **Generates** a ~100 word response using one of three prompt variants
    selected by lexical cues in the question:
    - `motivation` — matches "why...", "what excites...", "interested in"
@@ -134,8 +142,7 @@ The endpoint deliberately does NOT expose:
 * The classifier's confidence score per field
 
 These are all internal so we can swap implementations without coordinating
-a contract change with the extension or frontend teams. See the Week 5
-report on narrow interfaces.
+a contract change with the extension or frontend teams.
 
 ## Versioning
 

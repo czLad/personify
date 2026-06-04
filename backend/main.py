@@ -1,4 +1,5 @@
 """Personify FastAPI application entrypoint."""
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -6,6 +7,19 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.routers import auth, autofill, classify, health, history, upload
+
+# Python's default log level is WARNING, which swallows the logger.info
+# calls in pipeline.py and elsewhere. We use INFO during development so
+# the uvicorn terminal shows: which chunks were retrieved per question,
+# which prompt was sent to Gemini, and pipeline-complete summaries.
+# Format keeps lines compact for readability when essays are printed.
+#
+# When we ship to production, gate this on settings.environment so we
+# don't flood the logs there.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 
 @asynccontextmanager

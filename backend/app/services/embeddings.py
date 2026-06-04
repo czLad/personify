@@ -76,27 +76,43 @@ def extract_text(file_bytes: bytes, content_type: str | None, filename: str = ""
 
     Supports PDFs (via PyPDF2) and plain text. DOCX support can be added
     later — for the MVP demo, PDF and plain text are enough.
+
+    Whitespace normalization: PyPDF2 (especially on LaTeX-generated PDFs
+    like Min's resume) sometimes returns text with every word on its own
+    line and odd spacing between characters. That's bad both for what
+    Gemini sees in the prompt AND for our log readability (chunks render
+    vertically). We collapse all runs of whitespace into single spaces
+    before returning. The chunker downstream still splits cleanly via
+    its sentence/word fallback separators.
     """
     is_pdf = (
         (content_type and "pdf" in content_type.lower())
         or filename.lower().endswith(".pdf")
     )
 
+    raw: str = ""
     if is_pdf:
         try:
             # Lazy: only load PyPDF2 if the file is actually a PDF.
             from PyPDF2 import PdfReader
             reader = PdfReader(io.BytesIO(file_bytes))
             pages = [page.extract_text() or "" for page in reader.pages]
-            return "\n\n".join(pages).strip()
+            raw = "\n\n".join(pages)
         except Exception as e:
             logger.warning("PDF extraction failed: %s — falling back to raw decode", e)
 
-    # Plain text fallback
-    try:
-        return file_bytes.decode("utf-8", errors="ignore").strip()
-    except Exception:
-        return ""
+    if not raw:
+        # Plain text fallback (also catches PDF extraction failures).
+        try:
+            raw = file_bytes.decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+
+    # Normalize: collapse any whitespace run (spaces, tabs, newlines) into a
+    # single space, then strip outer whitespace. The chunker uses [". ", " ", ""]
+    # as fallback separators so word-level splitting still works fine.
+    import re
+    return re.sub(r"\s+", " ", raw).strip()
 
 
 # ── Chunking ──────────────────────────────────────────────────────────────────
