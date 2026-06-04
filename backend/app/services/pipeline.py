@@ -184,22 +184,28 @@ _MOTIVATION_TEMPLATE = _BASE_INSTRUCTIONS + (
     "Open with one specific detail from the resume excerpts that shows "
     "the applicant's fit for this kind of work. Use that as the entry "
     "point — a vivid opening, not a thesis statement.\n\n"
-    "After the opening, draw an explicit line between the experience "
-    "you just described and a value, technical direction, or product "
-    "theme stated in the job description above. The body should make "
-    "the alignment legible — show why this specific experience fits "
-    "this specific kind of work. Reference the domain the company "
-    "operates in (e.g., 'tools for thought', 'AI features that adapt "
-    "to how each person thinks', 'craft and polish in collaborative "
-    "software') without quoting the job description verbatim and "
-    "without naming the company itself. Engaging with what the work "
-    "IS is encouraged; flattering who the employer is, is not.\n\n"
-    "Save the company name for the final sentence at most, and use it "
-    "sparingly. First person, present tense. Aim for 110–150 words, "
-    "target around 130. If you can land the answer cleanly in 115 "
-    "words, do — don't pad to fill the range. Single paragraph. No "
-    "preamble, no quotation marks, no headings."
+
+    "After the opening, anchor to the TECHNICAL_SKILLS and ROLE_FOCUS "
+    "from the extracted signals — paraphrased, not quoted verbatim. "
+    "The MISSION and CULTURAL_VALUES should inform the tone and "
+    "direction — not as flattery, but as internalized context. The "
+    "response should feel like it was written by someone who has read "
+    "and understood what this company is building. Engaging with what "
+    "the work IS is encouraged; flattering who the employer is, is not.\n\n"
+
+    "If you have knowledge of {company} from your training data, use "
+    "it as soft background context — but only if highly confident. "
+    "If uncertain, rely only on the extracted signals above. Never "
+    "state company facts not supported by the signals or high-confidence "
+    "training knowledge.\n\n"
+
+    "Only reference experiences from the resume excerpts. Save the "
+    "company name for the final sentence at most. First person, present "
+    "tense. Aim for 150–200 words, target around 180. Single paragraph. "
+    "No preamble, no quotation marks, no headings."
 )
+
+
 
 _STORY_TEMPLATE = _BASE_INSTRUCTIONS + (
     "Aim for 150–210 words, target around 180. If you can land the "

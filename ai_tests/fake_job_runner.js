@@ -20,289 +20,290 @@
  * require pdf-lib for PDF support, which isn't worth the dependency.
  */
 
-(function () {
-  "use strict";
+(function() {
+    "use strict";
 
-  // The backend URL is read by content_script.js from this global. We
-  // set it from the input on every action so the user can change it
-  // without reloading the page.
-  function syncBackendUrl() {
-    const input = document.getElementById("backend-url");
-    window.PERSONIFY_BACKEND_URL = (input.value || "http://localhost:8000").trim();
-    return window.PERSONIFY_BACKEND_URL;
-  }
-
-  // ── Status helpers ──────────────────────────────────────────────────────
-  const statusEl = () => document.getElementById("status");
-
-  function setStatus(text, kind) {
-    const el = statusEl();
-    el.textContent = text;
-    el.className = "";
-    if (kind) el.classList.add(kind);
-  }
-
-  // ── Test backend ────────────────────────────────────────────────────────
-  async function pingBackend() {
-    const url = syncBackendUrl();
-    setStatus(`Pinging ${url}/health ...`);
-    try {
-      const res = await fetch(`${url}/health`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const body = await res.json();
-      setStatus(`Backend OK — ${body.service || "personify"} (${body.status})`, "ok");
-    } catch (err) {
-      setStatus(
-        `Backend unreachable: ${err.message}\n` +
-        `Hints: is uvicorn running on this port? Is CORS_ORIGINS in backend/.env\n` +
-        `including the origin this page is served from?`,
-        "bad",
-      );
-    }
-  }
-
-  // ── Auth ────────────────────────────────────────────────────────────────
-  // Logs in via /auth/login and stashes the real Supabase auth.users UUID on
-  // window.PERSONIFY_USER_ID. Both uploadOneFile (above) and content_script's
-  // autofill call read that global and send it as X-User-Id, so the whole
-  // flow runs as the real user — uploads land in Supabase (stored_in:
-  // "supabase") and retrieval reads the same user's chunks. Without login,
-  // PERSONIFY_USER_ID stays unset and everything falls back to demo-user
-  // (in-memory), exactly as before.
-  function updateIdentity() {
-    const el = document.getElementById("identity");
-    if (!el) return;
-    const uid = window.PERSONIFY_USER_ID;
-    if (uid) {
-      el.innerHTML =
-        `Logged in — uploads &amp; Run use <code>${uid}</code> ` +
-        `(should store_in <strong>supabase</strong>).`;
-    } else {
-      el.innerHTML =
-        `Not logged in — uploads use <code>demo-user</code> (in-memory fallback).`;
-    }
-  }
-
-  async function login() {
-    const url = syncBackendUrl();
-    const email = (document.getElementById("auth-email").value || "").trim();
-    const password = document.getElementById("auth-password").value || "";
-    if (!email || !password) {
-      setStatus("Enter email and password to log in.", "warn");
-      return;
+    // The backend URL is read by content_script.js from this global. We
+    // set it from the input on every action so the user can change it
+    // without reloading the page.
+    function syncBackendUrl() {
+        const input = document.getElementById("backend-url");
+        window.PERSONIFY_BACKEND_URL = (input.value || "http://localhost:8000").trim();
+        return window.PERSONIFY_BACKEND_URL;
     }
 
-    setStatus(`Logging in as ${email} ...`);
-    try {
-      const res = await fetch(`${url}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      const text = await res.text();
-      let body;
-      try { body = JSON.parse(text); } catch { body = { raw: text }; }
+    // ── Status helpers ──────────────────────────────────────────────────────
+    const statusEl = () => document.getElementById("status");
 
-      if (!res.ok) {
-        throw new Error(body.detail || body.raw || `HTTP ${res.status}`);
-      }
-
-      window.PERSONIFY_USER_ID = body.user_id;
-      updateIdentity();
-      setStatus(
-        `Logged in.\n  user_id = ${body.user_id}\n` +
-        `Uploads and Run Personify now use this identity. ` +
-        `Upload a resume — stored_in should be "supabase".`,
-        "ok",
-      );
-    } catch (err) {
-      window.PERSONIFY_USER_ID = null;
-      updateIdentity();
-      setStatus(
-        `Login failed: ${err.message}\n` +
-        `Hints: is the email/password correct? Is "Confirm email" disabled\n` +
-        `in Supabase Auth (or the user confirmed)? Is the backend running?`,
-        "bad",
-      );
-    }
-  }
-
-  function logout() {
-    window.PERSONIFY_USER_ID = null;
-    updateIdentity();
-    setStatus("Logged out — back to demo-user (in-memory).", "warn");
-  }
-
-  // ── Upload one file via /upload ─────────────────────────────────────────
-  // Returns a result object: { ok, filename, chunks_stored, stored_in, error? }
-  async function uploadOneFile(url, file) {
-    const fd = new FormData();
-    fd.append("file", file, file.name);
-
-    // X-User-Id only when logged in. Do NOT set Content-Type — the browser
-    // sets the multipart boundary for FormData automatically.
-    const headers = {};
-    if (window.PERSONIFY_USER_ID) headers["X-User-Id"] = window.PERSONIFY_USER_ID;
-
-    try {
-      const res = await fetch(`${url}/upload`, { method: "POST", body: fd, headers });
-      const text = await res.text();
-      let body;
-      try { body = JSON.parse(text); } catch { body = { raw: text }; }
-
-      if (!res.ok) {
-        return {
-          ok: false,
-          filename: file.name,
-          error: `HTTP ${res.status}: ${body.detail || body.raw || JSON.stringify(body)}`,
-        };
-      }
-      return {
-        ok: true,
-        filename: body.filename,
-        chunks_stored: body.chunks_stored,
-        stored_in: body.stored_in,
-        document_id: body.document_id,
-      };
-    } catch (err) {
-      return { ok: false, filename: file.name, error: err.message };
-    }
-  }
-
-  // ── Upload documents ────────────────────────────────────────────────────
-  // Reads both file inputs, uploads each file as its own POST /upload.
-  // The backend's ingest_document APPENDS to the user's chunk store
-  // (ADR change: see embeddings.py docstring). So uploading a resume and
-  // then several essays accumulates context across all uploads, which is
-  // what we want for retrieval.
-  async function uploadDocuments() {
-    const url = syncBackendUrl();
-    const resumeFile = document.getElementById("resume-input").files?.[0] || null;
-    const essayFiles = Array.from(document.getElementById("essay-input").files || []);
-
-    const allFiles = [];
-    if (resumeFile) allFiles.push({ role: "resume", file: resumeFile });
-    for (const f of essayFiles) allFiles.push({ role: "essay", file: f });
-
-    if (allFiles.length === 0) {
-      setStatus("Choose a resume and/or one or more essays first.", "warn");
-      return;
+    function setStatus(text, kind) {
+        const el = statusEl();
+        el.textContent = text;
+        el.className = "";
+        if (kind) el.classList.add(kind);
     }
 
-    setStatus(
-      `Uploading ${allFiles.length} file(s) sequentially:\n` +
-      allFiles.map((x) => `  • [${x.role}] ${x.file.name} (${x.file.size} bytes)`).join("\n"),
-    );
+    // ── Test backend ────────────────────────────────────────────────────────
+    async function pingBackend() {
+        const url = syncBackendUrl();
+        setStatus(`Pinging ${url}/health ...`);
+        try {
+            const res = await fetch(`${url}/health`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const body = await res.json();
+            setStatus(`Backend OK — ${body.service || "personify"} (${body.status})`, "ok");
+        } catch (err) {
+            setStatus(
+                `Backend unreachable: ${err.message}\n` +
+                `Hints: is uvicorn running on this port? Is CORS_ORIGINS in backend/.env\n` +
+                `including the origin this page is served from?`,
+                "bad",
+            );
+        }
+    }
 
-    // Sequential, not parallel: the backend's in-memory store isn't
-    // thread-safe and uploads are usually small. Sequential also makes
-    // the status output easy to follow.
-    const lines = ["Upload results:"];
-    let totalChunks = 0;
-    let anyOk = false;
+    // ── Auth ────────────────────────────────────────────────────────────────
+    // Logs in via /auth/login and stashes the real Supabase auth.users UUID on
+    // window.PERSONIFY_USER_ID. Both uploadOneFile (above) and content_script's
+    // autofill call read that global and send it as X-User-Id, so the whole
+    // flow runs as the real user — uploads land in Supabase (stored_in:
+    // "supabase") and retrieval reads the same user's chunks. Without login,
+    // PERSONIFY_USER_ID stays unset and everything falls back to demo-user
+    // (in-memory), exactly as before.
+    function updateIdentity() {
+        const el = document.getElementById("identity");
+        if (!el) return;
+        const uid = window.PERSONIFY_USER_ID;
+        if (uid) {
+            el.innerHTML =
+                `Logged in — uploads &amp; Run use <code>${uid}</code> ` +
+                `(should store_in <strong>supabase</strong>).`;
+        } else {
+            el.innerHTML =
+                `Not logged in — uploads use <code>demo-user</code> (in-memory fallback).`;
+        }
+    }
 
-    for (const { role, file } of allFiles) {
-      const r = await uploadOneFile(url, file);
-      if (r.ok) {
-        anyOk = true;
-        totalChunks += r.chunks_stored || 0;
-        lines.push(
-          `  OK  [${role}] ${r.filename}  ` +
-          `chunks=${r.chunks_stored}  stored_in=${r.stored_in}` +
-          (r.document_id ? `  doc_id=${r.document_id.slice(0, 8)}…` : ""),
+    async function login() {
+        const url = syncBackendUrl();
+        const email = (document.getElementById("auth-email").value || "").trim();
+        const password = document.getElementById("auth-password").value || "";
+        if (!email || !password) {
+            setStatus("Enter email and password to log in.", "warn");
+            return;
+        }
+
+        setStatus(`Logging in as ${email} ...`);
+        try {
+            const res = await fetch(`${url}/auth/login`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email, password }),
+            });
+            const text = await res.text();
+            let body;
+            try { body = JSON.parse(text); } catch { body = { raw: text }; }
+
+            if (!res.ok) {
+                throw new Error(body.detail || body.raw || `HTTP ${res.status}`);
+            }
+
+            window.PERSONIFY_USER_ID = body.user_id;
+            updateIdentity();
+            setStatus(
+                `Logged in.\n  user_id = ${body.user_id}\n` +
+                `Uploads and Run Personify now use this identity. ` +
+                `Upload a resume — stored_in should be "supabase".`,
+                "ok",
+            );
+        } catch (err) {
+            window.PERSONIFY_USER_ID = null;
+            updateIdentity();
+            setStatus(
+                `Login failed: ${err.message}\n` +
+                `Hints: is the email/password correct? Is "Confirm email" disabled\n` +
+                `in Supabase Auth (or the user confirmed)? Is the backend running?`,
+                "bad",
+            );
+        }
+    }
+
+    function logout() {
+        window.PERSONIFY_USER_ID = null;
+        updateIdentity();
+        setStatus("Logged out — back to demo-user (in-memory).", "warn");
+    }
+
+    // ── Upload one file via /upload ─────────────────────────────────────────
+    // Returns a result object: { ok, filename, chunks_stored, stored_in, error? }
+    async function uploadOneFile(url, file) {
+        const fd = new FormData();
+        fd.append("file", file, file.name);
+
+        // X-User-Id only when logged in. Do NOT set Content-Type — the browser
+        // sets the multipart boundary for FormData automatically.
+        const headers = {};
+        if (window.PERSONIFY_USER_ID) headers["X-User-Id"] = window.PERSONIFY_USER_ID;
+
+        try {
+            const res = await fetch(`${url}/upload`, { method: "POST", body: fd, headers });
+            const text = await res.text();
+            let body;
+            try { body = JSON.parse(text); } catch { body = { raw: text }; }
+
+            if (!res.ok) {
+                return {
+                    ok: false,
+                    filename: file.name,
+                    error: `HTTP ${res.status}: ${body.detail || body.raw || JSON.stringify(body)}`,
+                };
+            }
+            return {
+                ok: true,
+                filename: body.filename,
+                chunks_stored: body.chunks_stored,
+                stored_in: body.stored_in,
+                document_id: body.document_id,
+            };
+        } catch (err) {
+            return { ok: false, filename: file.name, error: err.message };
+        }
+    }
+
+    // ── Upload documents ────────────────────────────────────────────────────
+    // Reads both file inputs, uploads each file as its own POST /upload.
+    // The backend's ingest_document APPENDS to the user's chunk store
+    // (ADR change: see embeddings.py docstring). So uploading a resume and
+    // then several essays accumulates context across all uploads, which is
+    // what we want for retrieval.
+    async function uploadDocuments() {
+        const url = syncBackendUrl();
+        const resumeFile = document.getElementById("resume-input").files ? .[0] || null;
+        const essayFiles = Array.from(document.getElementById("essay-input").files || []);
+
+        const allFiles = [];
+        if (resumeFile) allFiles.push({ role: "resume", file: resumeFile });
+        for (const f of essayFiles) allFiles.push({ role: "essay", file: f });
+
+        if (allFiles.length === 0) {
+            setStatus("Choose a resume and/or one or more essays first.", "warn");
+            return;
+        }
+
+        setStatus(
+            `Uploading ${allFiles.length} file(s) sequentially:\n` +
+            allFiles.map((x) => `  • [${x.role}] ${x.file.name} (${x.file.size} bytes)`).join("\n"),
         );
-      } else {
-        lines.push(`  ERR [${role}] ${r.filename}  ${r.error}`);
-      }
+
+        // Sequential, not parallel: the backend's in-memory store isn't
+        // thread-safe and uploads are usually small. Sequential also makes
+        // the status output easy to follow.
+        const lines = ["Upload results:"];
+        let totalChunks = 0;
+        let anyOk = false;
+
+        for (const { role, file }
+            of allFiles) {
+            const r = await uploadOneFile(url, file);
+            if (r.ok) {
+                anyOk = true;
+                totalChunks += r.chunks_stored || 0;
+                lines.push(
+                    `  OK  [${role}] ${r.filename}  ` +
+                    `chunks=${r.chunks_stored}  stored_in=${r.stored_in}` +
+                    (r.document_id ? `  doc_id=${r.document_id.slice(0, 8)}…` : ""),
+                );
+            } else {
+                lines.push(`  ERR [${role}] ${r.filename}  ${r.error}`);
+            }
+        }
+
+        lines.push("");
+        lines.push(`Total chunks indexed across uploads: ${totalChunks}`);
+        setStatus(lines.join("\n"), anyOk ? "ok" : "bad");
+
+        if (anyOk) {
+            document.getElementById("run-btn").disabled = false;
+        }
     }
 
-    lines.push("");
-    lines.push(`Total chunks indexed across uploads: ${totalChunks}`);
-    setStatus(lines.join("\n"), anyOk ? "ok" : "bad");
+    // ── Run Personify ───────────────────────────────────────────────────────
+    async function runPersonify() {
+        syncBackendUrl();
 
-    if (anyOk) {
-      document.getElementById("run-btn").disabled = false;
+        if (typeof window.personifyRunAutofill !== "function") {
+            setStatus(
+                "content_script.js did not register window.personifyRunAutofill.\n" +
+                "Did the script load? Check the browser console.",
+                "bad",
+            );
+            return;
+        }
+
+        setStatus("Running pipeline (classify → retrieve → generate) ...");
+        const started = performance.now();
+
+        try {
+            const result = await window.personifyRunAutofill();
+            const elapsed = ((performance.now() - started) / 1000).toFixed(1);
+
+            const lines = [
+                `Done in ${elapsed}s`,
+                `  fields_detected: ${result.fields_detected}`,
+                `  fields_filled:   ${result.fields_filled}`,
+            ];
+            if (result.pipeline_meta) {
+                lines.push(`  pipeline_version: ${result.pipeline_meta.pipeline_version}`);
+                lines.push(`  user_id:          ${result.pipeline_meta.user_id}`);
+            }
+
+            const allSelectors = ["#q-why", "#q-tradeoff", "#q-about", "#q-email"];
+            const filledSelectors = new Set(
+                (result.responses || []).map((r) => r.selector),
+            );
+            lines.push("");
+            lines.push("Per-field outcome:");
+            for (const sel of allSelectors) {
+                const verdict = filledSelectors.has(sel) ? "FILLED " : "skipped";
+                lines.push(`  ${verdict}  ${sel}`);
+            }
+
+            setStatus(lines.join("\n"), "ok");
+        } catch (err) {
+            const url = window.PERSONIFY_BACKEND_URL || "(unset)";
+            setStatus(
+                `Pipeline failed: ${err.message}\n` +
+                `\n` +
+                `Common causes:\n` +
+                `  • Backend not running at ${url} (try "Test backend")\n` +
+                `  • CORS blocked: the page origin must be in CORS_ORIGINS in\n` +
+                `    backend/.env, and uvicorn must be restarted after editing it\n` +
+                `  • Backend crashed mid-request: check the uvicorn terminal for\n` +
+                `    a Python traceback\n` +
+                `\n` +
+                `Open DevTools → Network tab and click /autofill to see the real\n` +
+                `HTTP response. The browser console will also have the precise CORS\n` +
+                `error if that's what's blocking the request.`,
+                "bad",
+            );
+        }
     }
-  }
 
-  // ── Run Personify ───────────────────────────────────────────────────────
-  async function runPersonify() {
-    syncBackendUrl();
-
-    if (typeof window.personifyRunAutofill !== "function") {
-      setStatus(
-        "content_script.js did not register window.personifyRunAutofill.\n" +
-        "Did the script load? Check the browser console.",
-        "bad",
-      );
-      return;
+    // ── Reset ───────────────────────────────────────────────────────────────
+    function resetAnswers() {
+        document.querySelectorAll("#application textarea, #application input[type=text]")
+            .forEach((el) => { el.value = ""; });
+        setStatus("Answers cleared.");
     }
 
-    setStatus("Running pipeline (classify → retrieve → generate) ...");
-    const started = performance.now();
-
-    try {
-      const result = await window.personifyRunAutofill();
-      const elapsed = ((performance.now() - started) / 1000).toFixed(1);
-
-      const lines = [
-        `Done in ${elapsed}s`,
-        `  fields_detected: ${result.fields_detected}`,
-        `  fields_filled:   ${result.fields_filled}`,
-      ];
-      if (result.pipeline_meta) {
-        lines.push(`  pipeline_version: ${result.pipeline_meta.pipeline_version}`);
-        lines.push(`  user_id:          ${result.pipeline_meta.user_id}`);
-      }
-
-      const allSelectors = ["#q-why", "#q-tradeoff", "#q-about", "#q-email"];
-      const filledSelectors = new Set(
-        (result.responses || []).map((r) => r.selector),
-      );
-      lines.push("");
-      lines.push("Per-field outcome:");
-      for (const sel of allSelectors) {
-        const verdict = filledSelectors.has(sel) ? "FILLED " : "skipped";
-        lines.push(`  ${verdict}  ${sel}`);
-      }
-
-      setStatus(lines.join("\n"), "ok");
-    } catch (err) {
-      const url = window.PERSONIFY_BACKEND_URL || "(unset)";
-      setStatus(
-        `Pipeline failed: ${err.message}\n` +
-        `\n` +
-        `Common causes:\n` +
-        `  • Backend not running at ${url} (try "Test backend")\n` +
-        `  • CORS blocked: the page origin must be in CORS_ORIGINS in\n` +
-        `    backend/.env, and uvicorn must be restarted after editing it\n` +
-        `  • Backend crashed mid-request: check the uvicorn terminal for\n` +
-        `    a Python traceback\n` +
-        `\n` +
-        `Open DevTools → Network tab and click /autofill to see the real\n` +
-        `HTTP response. The browser console will also have the precise CORS\n` +
-        `error if that's what's blocking the request.`,
-        "bad",
-      );
-    }
-  }
-
-  // ── Reset ───────────────────────────────────────────────────────────────
-  function resetAnswers() {
-    document.querySelectorAll("#application textarea, #application input[type=text]")
-      .forEach((el) => { el.value = ""; });
-    setStatus("Answers cleared.");
-  }
-
-  // ── Wire up ─────────────────────────────────────────────────────────────
-  document.addEventListener("DOMContentLoaded", () => {
-    document.getElementById("ping-btn").addEventListener("click", pingBackend);
-    document.getElementById("login-btn").addEventListener("click", login);
-    document.getElementById("logout-btn").addEventListener("click", logout);
-    document.getElementById("upload-btn").addEventListener("click", uploadDocuments);
-    document.getElementById("run-btn").addEventListener("click", runPersonify);
-    document.getElementById("reset-btn").addEventListener("click", resetAnswers);
-    syncBackendUrl();
-    updateIdentity();
-  });
+    // ── Wire up ─────────────────────────────────────────────────────────────
+    document.addEventListener("DOMContentLoaded", () => {
+        document.getElementById("ping-btn").addEventListener("click", pingBackend);
+        document.getElementById("login-btn").addEventListener("click", login);
+        document.getElementById("logout-btn").addEventListener("click", logout);
+        document.getElementById("upload-btn").addEventListener("click", uploadDocuments);
+        document.getElementById("run-btn").addEventListener("click", runPersonify);
+        document.getElementById("reset-btn").addEventListener("click", resetAnswers);
+        syncBackendUrl();
+        updateIdentity();
+    });
 })();

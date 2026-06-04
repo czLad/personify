@@ -26,6 +26,7 @@ header {
     font-size: 16px;
     font-weight: 700;
     letter-spacing: -0.01em;
+    color: #6D65FC;
 }
 
 .icon-btn {
@@ -253,4 +254,26 @@ header {
 
 .dashboard-link:hover {
     background: #f4f4f8;
+}
+
+@keyframes ellipsis {
+    0% {
+        content: ".";
+    }
+    33% {
+        content: "..";
+    }
+    66% {
+        content: "...";
+    }
+}
+
+.loading-dots::after {
+    content: ".";
+    animation: ellipsis 1.2s infinite;
+}
+
+.loading-dots::after {
+    content: ".";
+    animation: ellipsis 1.2s infinite;
 }
