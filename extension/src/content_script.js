@@ -26,6 +26,16 @@ function getBackendUrl() {
     || "http://localhost:8000";
 }
 
+// Optional user identity, set by the host page after login (the fake job
+// page sets window.PERSONIFY_USER_ID from /auth/login). When present, it's
+// sent as the X-User-Id header so the backend stores/retrieves under the
+// real Supabase auth user instead of the demo user. When absent (the normal
+// unpacked-extension path until the popup wires real auth), no header is
+// sent and the backend falls back to its demo user — behavior is unchanged.
+function getUserId() {
+  return (typeof window !== "undefined" && window.PERSONIFY_USER_ID) || null;
+}
+
 // ── Listen for "Autofill" trigger from popup ─────────────────────────────────
 // Guarded so the script can be loaded outside a Chrome extension context
 // (e.g. the fake job page). Without this guard, the file crashes on load
@@ -102,9 +112,16 @@ async function callBackend(fields) {
   const company = guessCompanyName();
   const jobDescription = scrapeJobDescription();
 
+  // Send X-User-Id only when the host page set an identity. The /upload
+  // and /autofill calls MUST agree on user_id or retrieval looks under the
+  // wrong user and finds no chunks.
+  const headers = { "Content-Type": "application/json" };
+  const userId = getUserId();
+  if (userId) headers["X-User-Id"] = userId;
+
   const res = await fetch(`${getBackendUrl()}/autofill`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       fields,
       job_description: jobDescription,

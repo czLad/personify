@@ -61,14 +61,91 @@
     }
   }
 
+  // ── Auth ────────────────────────────────────────────────────────────────
+  // Logs in via /auth/login and stashes the real Supabase auth.users UUID on
+  // window.PERSONIFY_USER_ID. Both uploadOneFile (above) and content_script's
+  // autofill call read that global and send it as X-User-Id, so the whole
+  // flow runs as the real user — uploads land in Supabase (stored_in:
+  // "supabase") and retrieval reads the same user's chunks. Without login,
+  // PERSONIFY_USER_ID stays unset and everything falls back to demo-user
+  // (in-memory), exactly as before.
+  function updateIdentity() {
+    const el = document.getElementById("identity");
+    if (!el) return;
+    const uid = window.PERSONIFY_USER_ID;
+    if (uid) {
+      el.innerHTML =
+        `Logged in — uploads &amp; Run use <code>${uid}</code> ` +
+        `(should store_in <strong>supabase</strong>).`;
+    } else {
+      el.innerHTML =
+        `Not logged in — uploads use <code>demo-user</code> (in-memory fallback).`;
+    }
+  }
+
+  async function login() {
+    const url = syncBackendUrl();
+    const email = (document.getElementById("auth-email").value || "").trim();
+    const password = document.getElementById("auth-password").value || "";
+    if (!email || !password) {
+      setStatus("Enter email and password to log in.", "warn");
+      return;
+    }
+
+    setStatus(`Logging in as ${email} ...`);
+    try {
+      const res = await fetch(`${url}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const text = await res.text();
+      let body;
+      try { body = JSON.parse(text); } catch { body = { raw: text }; }
+
+      if (!res.ok) {
+        throw new Error(body.detail || body.raw || `HTTP ${res.status}`);
+      }
+
+      window.PERSONIFY_USER_ID = body.user_id;
+      updateIdentity();
+      setStatus(
+        `Logged in.\n  user_id = ${body.user_id}\n` +
+        `Uploads and Run Personify now use this identity. ` +
+        `Upload a resume — stored_in should be "supabase".`,
+        "ok",
+      );
+    } catch (err) {
+      window.PERSONIFY_USER_ID = null;
+      updateIdentity();
+      setStatus(
+        `Login failed: ${err.message}\n` +
+        `Hints: is the email/password correct? Is "Confirm email" disabled\n` +
+        `in Supabase Auth (or the user confirmed)? Is the backend running?`,
+        "bad",
+      );
+    }
+  }
+
+  function logout() {
+    window.PERSONIFY_USER_ID = null;
+    updateIdentity();
+    setStatus("Logged out — back to demo-user (in-memory).", "warn");
+  }
+
   // ── Upload one file via /upload ─────────────────────────────────────────
   // Returns a result object: { ok, filename, chunks_stored, stored_in, error? }
   async function uploadOneFile(url, file) {
     const fd = new FormData();
     fd.append("file", file, file.name);
 
+    // X-User-Id only when logged in. Do NOT set Content-Type — the browser
+    // sets the multipart boundary for FormData automatically.
+    const headers = {};
+    if (window.PERSONIFY_USER_ID) headers["X-User-Id"] = window.PERSONIFY_USER_ID;
+
     try {
-      const res = await fetch(`${url}/upload`, { method: "POST", body: fd });
+      const res = await fetch(`${url}/upload`, { method: "POST", body: fd, headers });
       const text = await res.text();
       let body;
       try { body = JSON.parse(text); } catch { body = { raw: text }; }
@@ -220,9 +297,12 @@
   // ── Wire up ─────────────────────────────────────────────────────────────
   document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("ping-btn").addEventListener("click", pingBackend);
+    document.getElementById("login-btn").addEventListener("click", login);
+    document.getElementById("logout-btn").addEventListener("click", logout);
     document.getElementById("upload-btn").addEventListener("click", uploadDocuments);
     document.getElementById("run-btn").addEventListener("click", runPersonify);
     document.getElementById("reset-btn").addEventListener("click", resetAnswers);
     syncBackendUrl();
+    updateIdentity();
   });
 })();

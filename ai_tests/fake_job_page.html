@@ -126,8 +126,8 @@
       opacity: 0.4;
       cursor: not-allowed;
     }
-    .control input[type=text] {
-      flex: 0 1 280px;
+    .control input[type=text], .control input[type=password] {
+      flex: 0 1 240px;
       font-size: 13px;
       padding: 7px 10px;
     }
@@ -181,6 +181,29 @@
           <input id="backend-url" type="text" value="http://localhost:8001" />
         </label>
         <button id="ping-btn" class="secondary" type="button">Test backend</button>
+      </div>
+
+      <!--
+        Auth row. Logs in via /auth/login and stashes the real Supabase
+        auth.users UUID (window.PERSONIFY_USER_ID), which the runner sends as
+        X-User-Id on /upload and content_script.js sends on /autofill. With a
+        real user, uploads land in Supabase (stored_in: "supabase") instead of
+        the in-memory demo store. Creds pre-filled with the shared tester
+        account for convenience — change as needed.
+      -->
+      <div class="control-row">
+        <label>Email:&nbsp;
+          <input id="auth-email" type="text" value="devraja315@gmail.com" />
+        </label>
+        <label>Password:&nbsp;
+          <input id="auth-password" type="password" value="tester1" />
+        </label>
+        <button id="login-btn" type="button">Log in</button>
+        <button id="logout-btn" class="secondary" type="button">Log out</button>
+      </div>
+
+      <div class="control-row">
+        <span id="identity">Not logged in — uploads use <code>demo-user</code> (in-memory fallback).</span>
       </div>
 
       <!--
