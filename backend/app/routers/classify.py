@@ -9,7 +9,7 @@ before the user clicks Autofill.
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.services.classifier import classify_fields, FieldClassification
+from app.services.classifier import FieldClassification, classify_fields
 
 router = APIRouter()
 

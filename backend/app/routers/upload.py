@@ -1,11 +1,14 @@
 """
 Document upload endpoint.
 
-Accepts a resume/essay, validates it, then hands it to the embedding service
-which chunks + embeds + stores it for later retrieval by the autofill pipeline.
+Accepts a resume/essay, validates it, then hands it to the embedding
+service which chunks + embeds + stores it for later retrieval by the
+autofill pipeline.
 
-Auth note: until Yousif wires real auth, uploads use the X-User-Id header if
-present, otherwise a single DEMO_USER_ID so the demo works.
+Auth note: until Yousif wires real auth, uploads use the X-User-Id header
+if present, otherwise a single DEMO_USER_ID so the demo works. When auth
+lands and X-User-Id is replaced by a verified Supabase auth.users UUID,
+the Supabase document_id path in ingest_document activates automatically.
 """
 from fastapi import APIRouter, File, Header, HTTPException, UploadFile
 from pydantic import BaseModel
@@ -26,6 +29,9 @@ class UploadResponse(BaseModel):
     user_id: str
     chunks_stored: int
     stored_in: str
+    # Present only on the supabase path (real auth users). Optional so that
+    # the demo response shape doesn't change from today.
+    document_id: str | None = None
 
 
 @router.post("", response_model=UploadResponse)
@@ -65,4 +71,5 @@ async def upload_document(
         user_id=user_id,
         chunks_stored=summary.get("chunks_stored", 0),
         stored_in=summary.get("stored_in", "memory"),
+        document_id=summary.get("document_id"),
     )

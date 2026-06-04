@@ -14,11 +14,10 @@ import json
 import logging
 from typing import Literal
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
-from app.core.config import settings
+from app.core.llm import get_chat_llm
 
 logger = logging.getLogger(__name__)
 
@@ -120,12 +119,11 @@ def llm_classify(
     Classify fields using Gemini. Returns a FieldClassification per field.
     Raises on network/parse failure — caller should catch and fall back.
     """
-    llm = ChatGoogleGenerativeAI(
-        model="gemini-1.5-flash",
-        google_api_key=settings.gemini_api_key,
-        timeout=timeout,
-        temperature=0,
-    )
+    llm = get_chat_llm(temperature=0, timeout=timeout)
+    if llm is None:
+        # No API key. Raising lets classify_fields() catch and fall back
+        # to heuristic, which is the right behavior here.
+        raise RuntimeError("Gemini API key not configured")
 
     field_lines = "\n".join(
         f'- selector="{f["selector"]}" label="{f["label"]}" type="{f.get("field_type", "text")}"'

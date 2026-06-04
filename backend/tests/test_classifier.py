@@ -13,14 +13,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.models.schemas import FormField
 from app.services.classifier import (
     FieldClassification,
     classify_fields,
     heuristic_classify,
 )
-from app.models.schemas import FormField
 from app.services.pipeline import run_autofill_pipeline
-
 
 # ── heuristic_classify ────────────────────────────────────────────────────────
 
