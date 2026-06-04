@@ -31,8 +31,6 @@ async function jsonFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-// ── Auth helpers ─────────────────────────────────────────────────────────────
-
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("token");
@@ -57,34 +55,33 @@ export function isLoggedIn(): boolean {
   return !!getToken();
 }
 
-// ── API client ────────────────────────────────────────────────────────────────
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  const userId = getUserId();
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (userId) headers["X-User-Id"] = userId;
+  return headers;
+}
 
 export const api = {
   health: () => jsonFetch<{ status: string; service: string }>("/health"),
 
-  history: () => jsonFetch<{ status: string; items: HistoryItem[] }>("/history"),
+  history: () => jsonFetch<{ status: string; items: HistoryItem[] }>("/history", {
+    headers: authHeaders(),
+  }),
 
   upload: async (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
-
-    const token = getToken();
-    const userId = getUserId();
-
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    if (userId) headers["X-User-Id"] = userId;
-
     const res = await fetch(`${BASE_URL}/upload`, {
       method: "POST",
-      headers,
+      headers: authHeaders(),
       body: fd,
     });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     return res.json();
   },
-
-  // ── Auth ──────────────────────────────────────────────────────────────────
 
   signup: (email: string, password: string) =>
     jsonFetch<AuthResponse>("/auth/signup", {
