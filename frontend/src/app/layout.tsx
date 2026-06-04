@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import Link from "next/link";
+import Image from "next/image";
 import NavLinks from "@/components/NavLinks";
 
 export const metadata: Metadata = {
@@ -12,10 +14,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <nav className="topnav">
-          <a href="/" className="brand">
-            <img src="/logo.png" alt="Personify" style={{ width: 24, height: 24, marginRight: 8, verticalAlign: "middle" }} />
+          <Link href="/" className="brand">
+            <Image src="/logo.png" alt="Personify" width={24} height={24} style={{ verticalAlign: "middle", marginRight: 8 }} />
             Personify
-          </a>
+          </Link>
           <NavLinks />
         </nav>
         <main className="container">{children}</main>
