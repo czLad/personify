@@ -177,7 +177,7 @@
     // what we want for retrieval.
     async function uploadDocuments() {
         const url = syncBackendUrl();
-        const resumeFile = document.getElementById("resume-input").files ? .[0] || null;
+        const resumeFile = document.getElementById("resume-input").files?.[0] || null;
         const essayFiles = Array.from(document.getElementById("essay-input").files || []);
 
         const allFiles = [];
