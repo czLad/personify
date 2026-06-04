@@ -1,14 +1,13 @@
-"""Autofill history endpoint. Stubbed — to be implemented by Backend Core."""
-from fastapi import APIRouter, HTTPException
+"""Autofill history endpoint."""
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel
+
+from app.core.config import settings
 
 router = APIRouter()
-# Can be replaced with data from .env.example?
-SUPABASE_URL = "https://test.supabase.co"
-SUPABASE_KEY = "public-anonymous-key"
-supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-# Used to extract the Bearer token from the Authorization header
 security = HTTPBearer()
+
 
 class HistoryEntry(BaseModel):
     company_name: str
@@ -16,41 +15,47 @@ class HistoryEntry(BaseModel):
     generated_response: str
     created_at: str
 
+
+def _supabase():
+    from supabase import create_client
+    return create_client(settings.supabase_url, settings.supabase_service_key)
+
+
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Validates the user's access token with Supabase and returns the user object."""
     token = credentials.credentials
     try:
-        user_response = supabase_client.auth.get_user(token)
+        client = _supabase()
+        user_response = client.auth.get_user(token)
         if not user_response or not user_response.user:
             raise HTTPException(status_code=401, detail="Invalid authentication credentials")
         return user_response.user
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=401, detail=f"Authentication error: {str(e)}")
 
-@router.get("", response_model=list[HistoryEntry])
-def list_history():
-    """
-    TODO: Return autofill history for the authenticated user.
-    Each entry: { company_name, question, generated_response, created_at }.
-    """
 
-    # Need to access SQL table "autofill_history" filtered by user_id, ordered by created_at desc
+@router.get("", response_model=list[HistoryEntry])
+def list_history(user=Depends(get_current_user)):
     try:
-        # Placeholder for actual database query
-        response = (supabase_client.table("autofill_history")
-            .select("company_name, question, generated_response, created_at")
-            .eq("user_id", get_current_user().id)
+        client = _supabase()
+        response = (
+            client.table("autofill_responses")
+            .select("autofill_sessions(company_name), question_text, generated_response, created_at")
+            .eq("autofill_sessions.user_id", user.id)
             .order("created_at", desc=True)
             .execute()
         )
-
-        return response.data  # Assuming response.data is a list of dicts matching HistoryEntry
+        return [
+            HistoryEntry(
+                company_name=row.get("autofill_sessions", {}).get("company_name", ""),
+                question=row.get("question_text", ""),
+                generated_response=row.get("generated_response", ""),
+                created_at=row.get("created_at", ""),
+            )
+            for row in (response.data or [])
+        ]
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-    # Then make returned entries match the above format
-
-    # return {
-    #     "status": "stubbed",
-    #     "items": [],
-    #     "note": "real implementation pending — see ROADMAP.md",
-    # }

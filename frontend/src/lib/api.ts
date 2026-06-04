@@ -7,7 +7,6 @@ export type HistoryItem = {
   created_at: string;
 };
 
-// TODO: update these types if backend schema changes
 export type AuthResponse = {
   user_id: string;
   access_token: string;
@@ -39,6 +38,11 @@ export function getToken(): string | null {
   return localStorage.getItem("token");
 }
 
+export function getUserId(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("user_id");
+}
+
 export function setToken(token: string, userId: string) {
   localStorage.setItem("token", token);
   localStorage.setItem("user_id", userId);
@@ -63,12 +67,17 @@ export const api = {
   upload: async (file: File) => {
     const fd = new FormData();
     fd.append("file", file);
+
+    const token = getToken();
+    const userId = getUserId();
+
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (userId) headers["X-User-Id"] = userId;
+
     const res = await fetch(`${BASE_URL}/upload`, {
       method: "POST",
-      headers: {
-        // TODO: uncomment when auth is wired
-        // Authorization: `Bearer ${getToken()}`,
-      },
+      headers,
       body: fd,
     });
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -89,7 +98,6 @@ export const api = {
       body: JSON.stringify({ email, password }),
     }),
 
-  // TODO: wire redirectTo once backend sets it
   loginWithGoogle: () =>
     jsonFetch<OAuthResponse>("/auth/login/google", { method: "POST" }),
 };
