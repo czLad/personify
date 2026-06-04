@@ -16,9 +16,21 @@ export default function LoginPage() {
     setBusy(true);
     setError("");
     try {
-      // TODO: this will call POST /auth/login once backend is ready
       const data = await api.login(email, password);
       setToken(data.access_token, data.user_id);
+  
+      // Store in chrome.storage.local so the extension can access it
+      if (
+        typeof window !== "undefined" &&
+        typeof chrome !== "undefined" &&
+        chrome.storage
+      ) {
+        chrome.storage.local.set({
+          token: data.access_token,
+          user_id: data.user_id,
+        });
+      }
+  
       router.push("/");
     } catch (err) {
       setError((err as Error).message);
