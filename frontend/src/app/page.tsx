@@ -1,14 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect} from "react";
 import { api, setUploadedDocs, getUserEmail } from "@/lib/api";
 import { log } from "@/lib/log";
 
 const INITIAL_CHECKLIST = [
   { label: "Create your account", done: true },
-  { label: "Upload your documents", done: false },
   { label: "Install the Chrome extension", done: false },
-  { label: "Personify your first personal statement", done: false },
+  { label: "Upload your documents", done: false }
 ];
 
 // Same gradient as the welcome banner — reused for the primary upload CTA.
@@ -38,6 +37,17 @@ export default function HomePage() {
 
   const resumeInputRef = useRef<HTMLInputElement>(null);
   const essayInputRef = useRef<HTMLInputElement>(null);
+  
+  useEffect(() => {
+    const installed = localStorage.getItem("personify_extension_installed") === "true";
+    if (installed) {
+      setChecklist((prev) =>
+        prev.map((item) =>
+          item.label === "Install the Chrome extension" ? { ...item, done: true } : item
+        )
+      );
+    }
+  }, []);
 
   function toggle(index: number) {
     setChecklist((prev) =>
@@ -148,7 +158,7 @@ export default function HomePage() {
   const [displayName, setDisplayName] = useState("there");
   useEffect(() => {
     const email = getUserEmail();
-    if (email) setDisplayName(email.split("@")[0]);
+    if (email) setDisplayName(email.split("@")[0].charAt(0).toUpperCase() + email.split("@")[0].slice(1));
   }, []);
 
   return (
