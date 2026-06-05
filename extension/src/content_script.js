@@ -19,21 +19,56 @@
  * never holds an API key and never calls an LLM directly.
  */
 
-// Backend URL can be overridden by the host page (e.g. the fake job page
-// uses this to point at a different port). Falls back to the default.
-function getBackendUrl() {
-  return (typeof window !== "undefined" && window.PERSONIFY_BACKEND_URL)
-    || "http://localhost:8000";
+// Backend URL resolution. Order of precedence:
+//   1. window.PERSONIFY_BACKEND_URL — explicit override set by the host page
+//      (the fake job page uses this to point at a specific port).
+//   2. A previously-resolved URL, cached for this page session.
+//   3. Probe /health on each candidate port and use the first that answers,
+//      so the extension works whether the backend runs on 8000 or 8001.
+//   4. Fall back to the first candidate so callers always have a URL to hit
+//      (and to surface a sensible error if nothing is running).
+var BACKEND_CANDIDATES = ["http://localhost:8000", "http://localhost:8001"];
+var _resolvedBackendUrl = null;
+
+async function resolveBackendUrl() {
+  if (typeof window !== "undefined" && window.PERSONIFY_BACKEND_URL) {
+    return window.PERSONIFY_BACKEND_URL;
+  }
+  if (_resolvedBackendUrl) return _resolvedBackendUrl;
+  for (const base of BACKEND_CANDIDATES) {
+    try {
+      const r = await fetch(`${base}/health`);
+      if (r.ok) {
+        _resolvedBackendUrl = base;
+        return base;
+      }
+    } catch (_e) {
+      // Port not listening / unreachable — try the next candidate.
+    }
+  }
+  return BACKEND_CANDIDATES[0];
 }
 
-// Optional user identity, set by the host page after login (the fake job
-// page sets window.PERSONIFY_USER_ID from /auth/login). When present, it's
-// sent as the X-User-Id header so the backend stores/retrieves under the
-// real Supabase auth user instead of the demo user. When absent (the normal
-// unpacked-extension path until the popup wires real auth), no header is
-// sent and the backend falls back to its demo user — behavior is unchanged.
+// Resolve the caller's user id for backend requests. Priority:
+//   1. window.PERSONIFY_USER_ID — explicit override set by the host page (the
+//      fake job page sets it from /auth/login).
+//   2. The session synced into chrome.storage.local — written by the dashboard
+//      sync (when localhost:3000 is loaded while logged in) or by the extension
+//      popup's own login. This is what makes autofill on a real ATS page (e.g.
+//      Ashby) run as the logged-in user instead of the backend's demo user.
+// Async because chrome.storage is async; callers await it. Returns null when no
+// identity is available, in which case the backend falls back to its demo user.
 function getUserId() {
-  return (typeof window !== "undefined" && window.PERSONIFY_USER_ID) || null;
+  const override = (typeof window !== "undefined" && window.PERSONIFY_USER_ID) || null;
+  if (override) return Promise.resolve(override);
+  if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) {
+    return Promise.resolve(null);
+  }
+  return new Promise(function(resolve) {
+    chrome.storage.local.get(["userId"], function(data) {
+      resolve((data && data.userId) || null);
+    });
+  });
 }
 
 // ── Listen for "Autofill" trigger from popup ─────────────────────────────────
@@ -121,10 +156,11 @@ async function callBackend(fields) {
   // and /autofill calls MUST agree on user_id or retrieval looks under the
   // wrong user and finds no chunks.
   const headers = { "Content-Type": "application/json" };
-  const userId = getUserId();
+  const userId = await getUserId();
   if (userId) headers["X-User-Id"] = userId;
 
-  const res = await fetch(`${getBackendUrl()}/autofill`, {
+  const backendUrl = await resolveBackendUrl();
+  const res = await fetch(`${backendUrl}/autofill`, {
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -203,6 +239,33 @@ async function runAutofill() {
 
   const data = await callBackend(fields);
   const filled = pasteResponses(data.responses);
+
+  // Attach each answer's question label (from the fields we just scanned) so the
+  // panels can match answers to question cards by stable label text, not only by
+  // selector — selectors can drift, or be CSS-escaped, between the scan and run.
+  const labelBySelector = {};
+  fields.forEach((f) => { labelBySelector[f.selector] = f.label; });
+  const responses = (data.responses || []).map((r) => ({
+    selector: r.selector,
+    response: r.response,
+    label: labelBySelector[r.selector] || null,
+  }));
+
+  // Publish the generated responses so EVERY Personify UI instance (the
+  // injected side panel and the toolbar popup) can show the answer under its
+  // matching question — not only the panel that triggered the run. Keyed by
+  // page URL so a panel on a different page doesn't pick these up. The popups
+  // read this on open and react to changes live via chrome.storage.onChanged.
+  if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+    chrome.storage.local.set({
+      personify_last_responses: {
+        url: location.href,
+        ts: Date.now(),
+        responses: responses,
+      },
+    });
+  }
+
   return {
     fields_detected: fields.length,
     fields_filled: filled,
@@ -210,7 +273,7 @@ async function runAutofill() {
     // Surface the per-field response array so the smoke-test UI can
     // show what was generated for each selector. The real extension
     // ignores this; only the fake page uses it.
-    responses: data.responses,
+    responses: responses,
   };
 }
 
@@ -286,6 +349,12 @@ function injectSidebar() {
     open = !open;
     panel.style.transform = open ? "translateX(0)" : "translateX(360px)";
     tab.style.right = open ? "360px" : "0";
+    // Re-scan on open so fields an SPA rendered after injection (e.g. Ashby's
+    // application form) get picked up, instead of showing the stale snapshot
+    // taken at document_idle.
+    if (open && panel.contentWindow) {
+      panel.contentWindow.postMessage({ source: "personify", type: "RESCAN" }, "*");
+    }
   });
 
   root.appendChild(tab);

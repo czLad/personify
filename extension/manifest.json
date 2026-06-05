@@ -5,10 +5,7 @@
     "description": "Agentic AI for job application personal statements.",
     "permissions": ["storage", "activeTab", "scripting", "tabs"],
     "host_permissions": [
-        "http://localhost:3000/*",
-        "http://localhost:8000/*",
-        "http://localhost:8081/*",
-        "http://localhost:3000/*",
+        "http://localhost/*",
         "https://*.ashbyhq.com/*",
         "https://*.greenhouse.io/*",
         "https://*.myworkdayjobs.com/*"
@@ -38,7 +35,7 @@
     },
     "web_accessible_resources": [{
         "resources": ["src/popup.html", "src/popup.css", "src/popup.js", "icons/icon48.png", "icons/logo-transparent.png"],
-        "matches": ["https://*.ashbyhq.com/*", "https://*.greenhouse.io/*", "https://*.myworkdayjobs.com/*"]
+        "matches": ["http://localhost:8081/*", "https://*.ashbyhq.com/*", "https://*.greenhouse.io/*", "https://*.myworkdayjobs.com/*"]
     }],
     "icons": {
         "16": "icons/icon16.png",
