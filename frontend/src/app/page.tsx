@@ -6,8 +6,8 @@ import { log } from "@/lib/log";
 
 const INITIAL_CHECKLIST = [
   { label: "Create your account", done: true },
-  { label: "Upload your documents", done: false },
   { label: "Install the Chrome extension", done: false },
+  { label: "Upload your documents", done: false }
 ];
 
 // Same gradient as the welcome banner — reused for the primary upload CTA.

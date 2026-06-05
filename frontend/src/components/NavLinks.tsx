@@ -18,7 +18,7 @@ export default function NavLinks() {
   return (
     <div className="links">
       <a href="#upload" onClick={handleUploadClick}>⇧ Upload</a>
-      <a href="/history">◴ History</a>
+      <a href="/install">↓ Install</a>
       <a href="/settings">𖠋 Account</a>
     </div>
   );

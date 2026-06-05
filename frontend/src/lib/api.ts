@@ -1,6 +1,6 @@
 const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
-export type HistoryItem = {
+export type DownloadItem = {
   company_name: string;
   question: string;
   generated_response: string;
@@ -119,7 +119,7 @@ function authHeaders(): Record<string, string> {
 export const api = {
   health: () => jsonFetch<{ status: string; service: string }>("/health"),
 
-  history: () => jsonFetch<{ status: string; items: HistoryItem[] }>("/history", {
+  download: () => jsonFetch<{ status: string; items: DownloadItem[] }>("/download", {
     headers: authHeaders(),
   }),
 
