@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import auth, autofill, classify, health, history, upload
+from app.routers import auth, autofill, classify, documents, health, history, upload
 
 # Python's default log level is WARNING, which swallows the logger.info
 # calls in pipeline.py and elsewhere. We use INFO during development so
@@ -52,6 +52,7 @@ app.include_router(health.router, tags=["health"])
 app.include_router(classify.router, prefix="/classify", tags=["classify"])
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(upload.router, prefix="/upload", tags=["upload"])
+app.include_router(documents.router, prefix="/documents", tags=["documents"])
 app.include_router(autofill.router, prefix="/autofill", tags=["autofill"])
 app.include_router(history.router, prefix="/history", tags=["history"])
 
