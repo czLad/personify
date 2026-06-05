@@ -306,33 +306,6 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {userId && (
-          <div
-            style={{
-              marginTop: 16,
-              paddingTop: 16,
-              borderTop: "1px solid var(--border)",
-              display: "flex",
-              alignItems: "baseline",
-              gap: 8,
-              fontSize: 12.5,
-            }}
-          >
-            <span style={{ color: "var(--muted)" }}>User ID</span>
-            <span
-              style={{
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                color: "var(--fg)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-              title={userId}
-            >
-              {userId}
-            </span>
-          </div>
-        )}
       </div>
 
       {/* Documents */}
