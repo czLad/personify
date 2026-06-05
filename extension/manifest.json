@@ -7,6 +7,7 @@
     "host_permissions": [
         "http://localhost:8000/*",
         "http://localhost:8081/*",
+        "http://localhost:3000/*",
         "https://*.ashbyhq.com/*",
         "https://*.greenhouse.io/*",
         "https://*.myworkdayjobs.com/*"
@@ -22,6 +23,11 @@
             "https://*.myworkdayjobs.com/*"
         ],
         "js": ["src/content_script.js"],
+        "run_at": "document_idle"
+    },
+    {
+        "matches": ["http://localhost:3000/*"],
+        "js": ["src/install_detector.js"],
         "run_at": "document_idle"
     }],
     "action": {

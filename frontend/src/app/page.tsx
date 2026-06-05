@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { api } from "@/lib/api";
 
 const INITIAL_CHECKLIST = [
@@ -21,6 +21,17 @@ export default function HomePage() {
   const [essayDragging, setEssayDragging] = useState(false);
   const resumeInputRef = useRef<HTMLInputElement>(null);
   const essayInputRef = useRef<HTMLInputElement>(null);
+  
+  useEffect(() => {
+    const installed = localStorage.getItem("personify_extension_installed") === "true";
+    if (installed) {
+      setChecklist((prev) =>
+        prev.map((item) =>
+          item.label === "Install the Chrome extension" ? { ...item, done: true } : item
+        )
+      );
+    }
+  }, []);
 
   function toggle(index: number) {
     setChecklist((prev) =>
