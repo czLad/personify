@@ -209,6 +209,89 @@ async function runAutofill() {
   };
 }
 
+// ── Floating trigger button ───────────────────────────────────────────────────
+
+// ── Sidebar panel (Simplify-style) ───────────────────────────────────────────
+
+function injectSidebar() {
+  if (document.getElementById("personify-sidebar-root")) return;
+
+  // Wrapper keeps tab + iframe together so they move as one unit
+  const root = document.createElement("div");
+  root.id = "personify-sidebar-root";
+  Object.assign(root.style, {
+    position: "fixed",
+    top: "0",
+    right: "0",
+    height: "100vh",
+    zIndex: "2147483647",
+    display: "flex",
+    flexDirection: "row",
+    alignItems: "flex-start",
+    pointerEvents: "none",
+  });
+
+  // ── Tab trigger ──────────────────────────────────────────────────────────
+  const tab = document.createElement("button");
+  tab.id = "personify-tab";
+  tab.title = "Personify";
+  tab.innerHTML = `<img src="${chrome.runtime.getURL('icons/logo-transparent.png')}" width="28" height="28" style="display:block;" />`;
+  Object.assign(tab.style, {
+    pointerEvents: "auto",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "2px",
+    width: "40px",
+    height: "72px",
+    position: "fixed",
+    top: "50%",
+    right: "0",
+    transform: "translateY(-50%)",
+    background: "#ffffff",
+    border: "none",
+    borderRadius: "10px 0 0 10px",
+    cursor: "pointer",
+    boxShadow: "-3px 0 12px rgba(0,0,0,0.12)",
+    transition: "width 0.15s, right 0.25s cubic-bezier(0.4,0,0.2,1)",
+    flexShrink: "0",
+  });
+  tab.addEventListener("mouseenter", () => { tab.style.width = "44px"; });
+  tab.addEventListener("mouseleave", () => { tab.style.width = "40px"; });
+
+  // ── iframe panel ─────────────────────────────────────────────────────────
+  const panel = document.createElement("iframe");
+  panel.id = "personify-panel";
+  panel.src = chrome.runtime.getURL("src/popup.html");
+  Object.assign(panel.style, {
+    pointerEvents: "auto",
+    width: "360px",
+    height: "100vh",
+    border: "none",
+    background: "#fff",
+    boxShadow: "-4px 0 24px rgba(0,0,0,0.12)",
+    transform: "translateX(360px)",
+    transition: "transform 0.25s cubic-bezier(0.4,0,0.2,1)",
+    alignSelf: "flex-start",
+  });
+
+  let open = false;
+  tab.addEventListener("click", () => {
+    open = !open;
+    panel.style.transform = open ? "translateX(0)" : "translateX(360px)";
+    tab.style.right = open ? "360px" : "0";
+  });
+
+  root.appendChild(tab);
+  root.appendChild(panel);
+  document.body.appendChild(root);
+}
+
+if (typeof chrome !== "undefined" && chrome.runtime) {
+  injectSidebar();
+}
+
 // Expose for the fake job page (smoke test). The real extension calls
 // runAutofill() via chrome.runtime messaging instead.
 if (typeof window !== "undefined") {
