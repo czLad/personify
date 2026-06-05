@@ -17,7 +17,7 @@ export default function LoginPage() {
     setError("");
     try {
       const data = await api.login(email, password);
-      setToken(data.access_token, data.user_id);
+      setToken(data.access_token, data.user_id, email);
   
       // Store in chrome.storage.local so the extension can access it
       if (

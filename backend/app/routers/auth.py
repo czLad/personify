@@ -1,10 +1,17 @@
 """Authentication endpoints — wired to Supabase Auth."""
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from app.core.config import settings
+from app.core.deps import get_current_user
 from app.models.schemas import AuthResponse, LoginRequest, SignupRequest
 
 router = APIRouter()
+
+
+class MeResponse(BaseModel):
+    user_id: str
+    email: str | None = None
 
 
 def _supabase():
@@ -52,3 +59,9 @@ def login(payload: LoginRequest):
         raise
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
+
+
+@router.get("/me", response_model=MeResponse)
+def me(user=Depends(get_current_user)):
+    """Return basic profile info for the authenticated user."""
+    return MeResponse(user_id=user.id, email=getattr(user, "email", None))

@@ -238,6 +238,7 @@ def _insert_documents_row(
     filename: str,
     content_type: str | None,
     document_id: str,
+    doc_type: str | None = None,
 ) -> bool:
     """
     Insert a row into the `documents` table. Returns True on success, False
@@ -249,12 +250,24 @@ def _insert_documents_row(
         from supabase import create_client
         client = create_client(settings.supabase_url, settings.supabase_service_key)
         storage_path = f"uploads/{user_id}/{filename}"
+
+        # Replace-by-filename: remove any prior document this user uploaded
+        # under the same name, so re-uploading an edited file replaces it
+        # instead of duplicating. The FK
+        #   document_chunks.document_id references documents(id) on delete cascade
+        # means deleting the old documents row also removes its chunks. A
+        # differently-named file (e.g. essays.pdf vs resume.pdf) is untouched,
+        # so resume + essays coexist.
+        client.table("documents").delete() \
+            .eq("user_id", user_id).eq("filename", filename).execute()
+
         client.table("documents").insert({
             "id": document_id,
             "user_id": user_id,
             "filename": filename,
             "content_type": content_type,
             "storage_path": storage_path,
+            "doc_type": doc_type,
         }).execute()
         return True
     except Exception as e:
@@ -280,13 +293,34 @@ def clear_user_chunks(user_id: str) -> None:
     _MEMORY_STORE.pop(user_id, None)
 
 
-# ── Ingestion (the function called from /upload) ──────────────────────────────
+def clear_user_corpus(user_id: str) -> None:
+    """
+    Remove ALL of a user's stored documents — both the in-memory store and
+    the Supabase/pgvector tables.
+
+    Used by the dashboard's combined upload (wipe-and-rebuild): the client
+    clears the corpus once, then re-uploads resume + essays together, so the
+    stored set always matches what's currently attached and duplicate /
+    stale chunks can't accumulate across re-uploads. Also the basis for a
+    "delete all my data" feature.
+
+    The pgvector clear is best-effort: when Supabase isn't configured it
+    raises inside _supabase_client, which we swallow — the in-memory clear
+    above is the only thing that matters in that case.
+    """
+    _MEMORY_STORE.pop(user_id, None)
+    try:
+        from app.services.retrieval import clear_user_chunks_pgvector
+        clear_user_chunks_pgvector(user_id)
+    except Exception as e:
+        logger.info("pgvector clear skipped (%s)", e)
 
 def ingest_document(
     file_bytes: bytes,
     content_type: str | None,
     filename: str,
     user_id: str,
+    doc_type: str | None = None,
 ) -> dict:
     """
     End-to-end ingestion: extract → chunk → embed → store.
@@ -325,7 +359,7 @@ def ingest_document(
     if _supabase_configured():
         if _looks_like_uuid(user_id):
             document_id = str(uuid.uuid4())
-            inserted = _insert_documents_row(user_id, filename, content_type, document_id)
+            inserted = _insert_documents_row(user_id, filename, content_type, document_id, doc_type)
             if not inserted:
                 # Drop back to chunks-only — at least retrieval will work.
                 document_id = None
