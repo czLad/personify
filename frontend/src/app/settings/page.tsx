@@ -129,7 +129,6 @@ export default function SettingsPage() {
   const [ready, setReady] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
   const [resumes, setResumes] = useState<DocView[]>([]);
   const [essays, setEssays] = useState<DocView[]>([]);
   const [others, setOthers] = useState<DocView[]>([]);
@@ -158,10 +157,8 @@ export default function SettingsPage() {
 
       if (meRes.status === "fulfilled") {
         setEmail(meRes.value.email ?? getUserEmail());
-        setUserId(meRes.value.user_id ?? getUserId());
       } else {
         setEmail(getUserEmail());
-        setUserId(getUserId());
       }
 
       if (docsRes.status === "fulfilled") {
