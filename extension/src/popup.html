@@ -1,15 +1,14 @@
 <!DOCTYPE html>
 <html>
-
 <head>
     <meta charset="utf-8" />
     <title>Personify</title>
     <link rel="stylesheet" href="popup.css" />
 </head>
-
 <body>
     <header>
         <div class="brand">
+            <img src="../icons/icon48.png" alt="Personify logo" style="width:20px;height:20px;vertical-align:middle;margin-right:6px;" />
             <span class="brand-name">Personify</span>
         </div>
         <div class="header-actions">
@@ -18,24 +17,24 @@
     </header>
 
     <div class="tabs">
-        <button class="tab active" data-tab="autofill">✏ Autofill</button>
-        <button class="tab" data-tab="profile">👤 Profile</button>
+        <button class="tab active" data-tab="autofill">✎ Autofill</button>
+        <button class="tab" data-tab="profile">𖠋 Profile</button>
     </div>
 
-    <!-- Autofill Tab -->
     <div id="tab-autofill" class="tab-content active">
-        <div id="questions-list">
-            <!-- Question cards injected here by popup.js -->
-        </div>
+        <div id="questions-list"></div>
         <div id="no-questions" class="empty-state" style="display:none">
             <p>No personal statement fields detected on this page.</p>
         </div>
         <div id="loading" class="loading-state">
             <p>Scanning page...</p>
         </div>
+        <div id="autofill-footer" style="display:none;padding:12px 16px;border-top:1px solid #f0f0f0;">
+            <button id="personify-all-btn" class="autofill-btn">⟡ Personify My Application</button>
+            <div id="footer-status" class="card-status" style="margin-top:6px;"></div>
+        </div>
     </div>
 
-    <!-- Profile Tab -->
     <div id="tab-profile" class="tab-content">
         <div class="profile-card">
             <div class="avatar">D</div>
@@ -44,28 +43,21 @@
                 <div class="profile-email">daphne@ucla.edu</div>
             </div>
         </div>
-
         <div class="profile-section">
-            <div class="profile-row">
-                <span class="profile-label">Tone</span>
-                <span class="profile-value">Balanced</span>
-            </div>
-            <div class="profile-row">
-                <span class="profile-label">Length</span>
-                <span class="profile-value">~100 words</span>
-            </div>
             <div class="profile-row">
                 <span class="profile-label">Resume</span>
                 <span class="profile-value profile-ok">✓ Uploaded</span>
             </div>
+            <div class="profile-row">
+                <span class="profile-label">Additional Documents</span>
+                <span class="profile-value profile-ok">✓ Uploaded</span>
+            </div>
         </div>
-
-        <a href="http://localhost:3000/settings" target="_blank" class="dashboard-link">
-        Edit preferences in dashboard ↗
-      </a>
+        <a href="http://localhost:3000/#upload" target="_blank" class="dashboard-link">
+            Upload documents in dashboard ↗
+        </a>
     </div>
 
     <script src="popup.js"></script>
 </body>
-
 </html>
