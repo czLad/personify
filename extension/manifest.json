@@ -5,6 +5,7 @@
     "description": "Agentic AI for job application personal statements.",
     "permissions": ["storage", "activeTab", "scripting", "tabs"],
     "host_permissions": [
+        "http://localhost:3000/*",
         "http://localhost:8000/*",
         "http://localhost:8081/*",
         "http://localhost:3000/*",
@@ -17,6 +18,7 @@
     },
     "content_scripts": [{
         "matches": [
+            "http://localhost:3000/*",
             "http://localhost:8081/*",
             "https://*.ashbyhq.com/*",
             "https://*.greenhouse.io/*",

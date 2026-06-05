@@ -294,7 +294,20 @@ function injectSidebar() {
 }
 
 if (typeof chrome !== "undefined" && chrome.runtime) {
-  injectSidebar();
+  // On the dashboard (localhost:3000), sync auth token to chrome.storage
+  // so the extension popup can use it without a separate login.
+  if (window.location.origin === "http://localhost:3000") {
+    const token = localStorage.getItem("token");
+    const userId = localStorage.getItem("user_id");
+    const userEmail = localStorage.getItem("user_email");
+    if (token) {
+      chrome.storage.local.set({ token, userId, userEmail });
+    } else {
+      chrome.storage.local.remove(["token", "userId", "userEmail"]);
+    }
+  } else {
+    injectSidebar();
+  }
 }
 
 // Expose for the fake job page (smoke test). The real extension calls
