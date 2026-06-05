@@ -86,7 +86,10 @@ header {
 .tab-content {
     display: none;
     padding: 14px 16px;
-    /* max-height: 500px; */
+    /* Bounded height is what makes overflow-y:auto actually scroll. Viewport-
+       relative so the full-height injected side panel (iframe at 100vh) uses
+       its space; the ~120px accounts for the header + tabs above. */
+    max-height: calc(100vh - 120px);
     min-height: 180px;
     overflow-y: auto;
 }
