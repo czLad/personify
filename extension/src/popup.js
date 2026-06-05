@@ -9,7 +9,7 @@ function classifyQuestion(label) {
     return { variant: "background", color: "#1e8449", emoji: "👤" };
 }
 function isPersonalStatement(label) {
-  var SKIP = /\b(email|phone|url|linkedin|website|address|city|state|zip|country|name|first|last|salary|date|start|end|referral|how did you hear|backend|github|cover letter|twitter)\b/i;
+  var SKIP = /\b(email|phone|url|linkedin|website|address|city|state|zip|country|name|first|last|salary|date|start|end|referral|how did you hear|backend|github|twitter)\b/i;
   if (SKIP.test(label)) return false;
   if (label.length < 10) return false;
   return true;
@@ -36,12 +36,14 @@ function renderQuestions(questions) {
     loading.style.display = "none";
 
     if (!questions || questions.length === 0) {
+        list.innerHTML = "";
         empty.style.display = "block";
         if (footer) footer.style.display = "none";
         return;
     }
 
     list.innerHTML = "";
+    empty.style.display = "none";
     if (footer) footer.style.display = "block";
 
     questions.forEach(function(q) {
@@ -58,9 +60,25 @@ function renderQuestions(questions) {
 }
 
 // ── Populate responses ────────────────────────────────────────────────────────
+// Match each answer to its question card WITHOUT putting the selector inside an
+// attribute-value query: the selector is CSS-escaped (e.g. "#\\35 b15..." for an
+// id starting with a digit), and a [data-selector="..."] query would re-interpret
+// that escape and fail to match the literally-stored value. So we compare in JS
+// with === instead. Falls back to matching by question label text, which stays
+// stable even if the page's element ids/positions drift between scan and run.
 function populateResponses(responses) {
+    var cards = document.querySelectorAll(".question-card");
     responses.forEach(function(r) {
-        var card = document.querySelector('.question-card[data-selector="' + r.selector + '"]');
+        var card = null;
+        for (var i = 0; i < cards.length && !card; i++) {
+            if (cards[i].dataset.selector === r.selector) card = cards[i];
+        }
+        if (!card && r.label) {
+            for (var j = 0; j < cards.length && !card; j++) {
+                var qt = cards[j].querySelector(".question-text");
+                if (qt && qt.textContent.trim() === String(r.label).trim()) card = cards[j];
+            }
+        }
         if (!card) return;
         var box = card.querySelector(".response-box");
         if (box) {
@@ -117,7 +135,26 @@ if (personifyBtn) {
 }
 
 // ── Profile tab ──────────────────────────────────────────────────────────────
-const BACKEND = "http://localhost:8000";
+// Backend URL resolution — mirrors content_script.js / background.js: probe
+// each candidate's /health and use the first that answers, so the popup's
+// login and /documents calls work whether the backend runs on 8000 or 8001.
+// Cached after the first successful probe.
+var BACKEND_CANDIDATES = ["http://localhost:8000", "http://localhost:8001"];
+var _resolvedBackend = null;
+
+function resolveBackend() {
+    if (_resolvedBackend) return Promise.resolve(_resolvedBackend);
+    return (function tryNext(i) {
+        if (i >= BACKEND_CANDIDATES.length) return BACKEND_CANDIDATES[0]; // fallback
+        var base = BACKEND_CANDIDATES[i];
+        return fetch(base + "/health")
+            .then(function(r) {
+                if (r.ok) { _resolvedBackend = base; return base; }
+                return tryNext(i + 1);
+            })
+            .catch(function() { return tryNext(i + 1); });
+    })(0);
+}
 
 var loginBtn = document.getElementById("login-btn");
 if (loginBtn) {
@@ -129,26 +166,28 @@ if (loginBtn) {
         loginBtn.disabled = true;
         loginBtn.textContent = "Signing in…";
 
-        fetch(BACKEND + "/auth/login", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: email, password: password }),
-        })
-        .then(function(r) { return r.ok ? r.json() : r.json().then(function(e) { throw new Error(e.detail || "Login failed"); }); })
-        .then(function(data) {
-            chrome.storage.local.set({
-                token: data.access_token,
-                userId: data.user_id,
-                userEmail: email,
-            }, function() {
-                loadProfile();
+        resolveBackend().then(function(BACKEND) {
+            fetch(BACKEND + "/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ email: email, password: password }),
+            })
+            .then(function(r) { return r.ok ? r.json() : r.json().then(function(e) { throw new Error(e.detail || "Login failed"); }); })
+            .then(function(data) {
+                chrome.storage.local.set({
+                    token: data.access_token,
+                    userId: data.user_id,
+                    userEmail: email,
+                }, function() {
+                    loadProfile();
+                });
+            })
+            .catch(function(err) {
+                errorEl.textContent = err.message;
+                errorEl.style.display = "block";
+                loginBtn.disabled = false;
+                loginBtn.textContent = "Sign in";
             });
-        })
-        .catch(function(err) {
-            errorEl.textContent = err.message;
-            errorEl.style.display = "block";
-            loginBtn.disabled = false;
-            loginBtn.textContent = "Sign in";
         });
     });
 }
@@ -179,22 +218,24 @@ function loadProfile() {
         content.style.display = "block";
 
         // Fetch real documents from backend
-        fetch(BACKEND + "/documents", { headers: headers })
-            .then(function(r) { return r.ok ? r.json() : []; })
-            .then(function(docs) {
-                var hasResume = docs.some(function(d) { return d.doc_type === "resume"; });
-                var hasOther = docs.some(function(d) { return d.doc_type !== "resume"; });
-                var resumeEl = document.getElementById("profile-resume-status");
-                var docsEl = document.getElementById("profile-docs-status");
-                resumeEl.textContent = hasResume ? "✓ Uploaded" : "Not uploaded";
-                resumeEl.className = "profile-value " + (hasResume ? "profile-ok" : "");
-                docsEl.textContent = hasOther ? "✓ Uploaded" : "None";
-                docsEl.className = "profile-value " + (hasOther ? "profile-ok" : "");
-            })
-            .catch(function() {
-                document.getElementById("profile-resume-status").textContent = "—";
-                document.getElementById("profile-docs-status").textContent = "—";
-            });
+        resolveBackend().then(function(BACKEND) {
+            fetch(BACKEND + "/documents", { headers: headers })
+                .then(function(r) { return r.ok ? r.json() : []; })
+                .then(function(docs) {
+                    var hasResume = docs.some(function(d) { return d.doc_type === "resume"; });
+                    var hasOther = docs.some(function(d) { return d.doc_type !== "resume"; });
+                    var resumeEl = document.getElementById("profile-resume-status");
+                    var docsEl = document.getElementById("profile-docs-status");
+                    resumeEl.textContent = hasResume ? "✓ Uploaded" : "Not uploaded";
+                    resumeEl.className = "profile-value " + (hasResume ? "profile-ok" : "");
+                    docsEl.textContent = hasOther ? "✓ Uploaded" : "None";
+                    docsEl.className = "profile-value " + (hasOther ? "profile-ok" : "");
+                })
+                .catch(function() {
+                    document.getElementById("profile-resume-status").textContent = "—";
+                    document.getElementById("profile-docs-status").textContent = "—";
+                });
+        });
     });
 }
 
@@ -205,18 +246,71 @@ document.querySelectorAll(".tab").forEach(function(tab) {
     }
 });
 
-// ── Auto scan on popup open ───────────────────────────────────────────────────
-// Uses chrome.tabs from popup context (not service worker)
-chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
-    if (!tabs || !tabs[0]) {
-        renderQuestions([]);
+// ── Stored autofill responses ─────────────────────────────────────────────────
+// The content script writes the generated answers to chrome.storage after a
+// run. Every panel instance (this toolbar popup AND the injected side panel)
+// reads them here, so the answer shows under its question regardless of which
+// panel triggered the run. Scoped by page URL so answers from one page don't
+// appear on a panel attached to a different page.
+function applyStoredResponses(stored) {
+    if (!stored || !stored.responses || !stored.responses.length) return;
+    if (typeof chrome === "undefined" || !chrome.tabs) {
+        populateResponses(stored.responses);
         return;
     }
-    chrome.tabs.sendMessage(tabs[0].id, { type: "SCAN_FIELDS" }, function(resp) {
-        if (chrome.runtime.lastError || !resp) {
+    chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+        var url = tabs && tabs[0] && tabs[0].url;
+        if (url && stored.url && url === stored.url) {
+            populateResponses(stored.responses);
+        }
+    });
+}
+
+function loadStoredResponses() {
+    if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+    chrome.storage.local.get(["personify_last_responses"], function(data) {
+        applyStoredResponses(data && data.personify_last_responses);
+    });
+}
+
+// Live update: when a run completes anywhere, refresh this panel too.
+if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.onChanged) {
+    chrome.storage.onChanged.addListener(function(changes, area) {
+        if (area === "local" && changes.personify_last_responses) {
+            applyStoredResponses(changes.personify_last_responses.newValue);
+        }
+    });
+}
+
+// ── Scan the active tab for fields ────────────────────────────────────────────
+// Uses chrome.tabs from popup context (not service worker). Called on load and
+// again each time the injected side panel is reopened, so fields a single-page
+// app (e.g. Ashby) renders AFTER the panel first loaded still get picked up.
+function doScan() {
+    chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
+        if (!tabs || !tabs[0]) {
             renderQuestions([]);
             return;
         }
-        renderQuestions(resp.fields || []);
+        chrome.tabs.sendMessage(tabs[0].id, { type: "SCAN_FIELDS" }, function(resp) {
+            if (chrome.runtime.lastError || !resp) {
+                renderQuestions([]);
+                return;
+            }
+            renderQuestions(resp.fields || []);
+            // Cards now exist — backfill any answers from a previous run on
+            // this page (covers opening a panel after autofill already ran).
+            loadStoredResponses();
+        });
     });
+}
+
+// The content script posts this when the user opens the side panel, so the
+// panel re-scans at that moment (matching how the toolbar popup scans on open).
+window.addEventListener("message", function(e) {
+    if (e.data && e.data.source === "personify" && e.data.type === "RESCAN") {
+        doScan();
+    }
 });
+
+doScan();
