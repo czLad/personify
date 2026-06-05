@@ -26,6 +26,10 @@
         "default_popup": "src/popup.html",
         "default_title": "Personify"
     },
+    "web_accessible_resources": [{
+        "resources": ["src/popup.html", "src/popup.css", "src/popup.js", "icons/icon48.png", "icons/logo-transparent.png"],
+        "matches": ["https://*.ashbyhq.com/*", "https://*.greenhouse.io/*", "https://*.myworkdayjobs.com/*"]
+    }],
     "icons": {
         "16": "icons/icon16.png",
         "48": "icons/icon48.png",

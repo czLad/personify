@@ -6,9 +6,13 @@
 
 body {
     width: 360px;
+    height: 100vh;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     background: #ffffff;
     color: #1a1a2e;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 
@@ -82,13 +86,13 @@ header {
 .tab-content {
     display: none;
     padding: 14px 16px;
-    min-height: 180px;
-    max-height: 400px;
+    flex: 1;
     overflow-y: auto;
 }
 
 .tab-content.active {
-    display: block;
+    display: flex;
+    flex-direction: column;
 }
 
 
