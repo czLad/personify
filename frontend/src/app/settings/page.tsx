@@ -7,7 +7,6 @@ import {
   api,
   isLoggedIn,
   clearToken,
-  getUserId,
   getUserEmail,
   getUploadedDocs,
 } from "@/lib/api";
