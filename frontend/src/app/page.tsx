@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { api, setUploadedDocs } from "@/lib/api";
+import { useState, useRef, useEffect } from "react";
+import { api, setUploadedDocs, getUserEmail } from "@/lib/api";
 import { log } from "@/lib/log";
 
 const INITIAL_CHECKLIST = [
@@ -145,6 +145,11 @@ export default function HomePage() {
   }
 
   const hasStaged = !!resumeFile || essayFiles.length > 0;
+  const [displayName, setDisplayName] = useState("there");
+  useEffect(() => {
+    const email = getUserEmail();
+    if (email) setDisplayName(email.split("@")[0]);
+  }, []);
 
   return (
     <>
@@ -157,7 +162,7 @@ export default function HomePage() {
         color: "white",
       }}>
         <h1 style={{ fontSize: 32, fontWeight: 700, color: "white", marginBottom: 8 }}>
-          Welcome, Daphne 👋
+          Welcome, {displayName} 👋
         </h1>
         <p style={{ fontSize: 15, opacity: 0.75 }}>
           Let&apos;s get you set up so Personify can start writing your personal statements.

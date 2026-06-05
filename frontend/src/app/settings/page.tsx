@@ -7,7 +7,6 @@ import {
   api,
   isLoggedIn,
   clearToken,
-  getUserId,
   getUserEmail,
   getUploadedDocs,
 } from "@/lib/api";
@@ -129,7 +128,6 @@ export default function SettingsPage() {
   const [ready, setReady] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
   const [resumes, setResumes] = useState<DocView[]>([]);
   const [essays, setEssays] = useState<DocView[]>([]);
   const [others, setOthers] = useState<DocView[]>([]);
@@ -158,10 +156,8 @@ export default function SettingsPage() {
 
       if (meRes.status === "fulfilled") {
         setEmail(meRes.value.email ?? getUserEmail());
-        setUserId(meRes.value.user_id ?? getUserId());
       } else {
         setEmail(getUserEmail());
-        setUserId(getUserId());
       }
 
       if (docsRes.status === "fulfilled") {
@@ -306,33 +302,6 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        {userId && (
-          <div
-            style={{
-              marginTop: 16,
-              paddingTop: 16,
-              borderTop: "1px solid var(--border)",
-              display: "flex",
-              alignItems: "baseline",
-              gap: 8,
-              fontSize: 12.5,
-            }}
-          >
-            <span style={{ color: "var(--muted)" }}>User ID</span>
-            <span
-              style={{
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
-                color: "var(--fg)",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-              title={userId}
-            >
-              {userId}
-            </span>
-          </div>
-        )}
       </div>
 
       {/* Documents */}
