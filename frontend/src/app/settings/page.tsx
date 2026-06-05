@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   api,
   isLoggedIn,
@@ -232,13 +233,13 @@ export default function SettingsPage() {
             <button className="btn" onClick={() => router.push("/login")}>
               Sign in
             </button>
-            <a
+            <Link
               href="/signup"
               className="btn"
               style={{ background: "transparent", color: "var(--accent)", border: "1px solid var(--border)" }}
             >
               Create account
-            </a>
+            </Link>
           </div>
         </div>
       </>
@@ -368,9 +369,9 @@ export default function SettingsPage() {
             <p style={{ fontSize: 14, color: "var(--muted)", marginBottom: 12 }}>
               You haven&apos;t uploaded any documents yet.
             </p>
-            <a className="btn" href="/#upload">
+            <Link className="btn" href="/#upload">
               Upload documents
-            </a>
+            </Link>
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
@@ -416,9 +417,9 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <a href="/#upload" style={{ fontSize: 13, fontWeight: 500, color: "var(--accent)" }}>
+            <Link href="/#upload" style={{ fontSize: 13, fontWeight: 500, color: "var(--accent)" }}>
               Manage documents →
-            </a>
+            </Link>
           </div>
         )}
       </div>
