@@ -43,11 +43,16 @@ function getUserId() {
 
 if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage) {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message?.type === "AUTOFILL_TRIGGER") {
+    if (message && message.type === "AUTOFILL_TRIGGER") {
       runAutofill()
         .then((result) => sendResponse({ ok: true, result }))
         .catch((err) => sendResponse({ ok: false, error: err.message }));
-      return true; // keep the message channel open for async response
+      return true;
+    }
+    if (message && message.type === "SCAN_FIELDS") {
+      const fields = collectFields();
+      sendResponse({ fields });
+      return true;
     }
   });
 }

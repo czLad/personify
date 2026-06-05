@@ -3,9 +3,10 @@
     "name": "Personify",
     "version": "0.1.0",
     "description": "Agentic AI for job application personal statements.",
-    "permissions": ["storage", "activeTab", "scripting"],
+    "permissions": ["storage", "activeTab", "scripting", "tabs"],
     "host_permissions": [
         "http://localhost:8000/*",
+        "http://localhost:8081/*",
         "https://*.ashbyhq.com/*",
         "https://*.greenhouse.io/*",
         "https://*.myworkdayjobs.com/*"
@@ -15,6 +16,7 @@
     },
     "content_scripts": [{
         "matches": [
+            "http://localhost:8081/*",
             "https://*.ashbyhq.com/*",
             "https://*.greenhouse.io/*",
             "https://*.myworkdayjobs.com/*"
