@@ -158,7 +158,7 @@ export default function HomePage() {
   const [displayName, setDisplayName] = useState("there");
   useEffect(() => {
     const email = getUserEmail();
-    if (email) setDisplayName(email.split("@")[0]);
+    if (email) setDisplayName(email.split("@")[0].charAt(0).toUpperCase() + email.split("@")[0].slice(1));
   }, []);
 
   return (

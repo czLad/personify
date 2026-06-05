@@ -7,6 +7,9 @@ import NavLinks from "@/components/NavLinks";
 export const metadata: Metadata = {
   title: "Personify",
   description: "Agentic AI for job application personal statements.",
+  icons: {
+    icon: "/logo.png",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
