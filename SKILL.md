@@ -62,6 +62,22 @@ The UUID detection (`_looks_like_uuid`) is the gate. Demo flows pass
 `"demo-user"` (not a UUID) so they never accidentally write to the
 `documents` table — that's good, because the FK requires `auth.users(id)`.
 
+Multi-file + multi-user semantics (Supabase path):
+- Uploads **append**, they don't wipe the user. So resume + essays
+  uploaded as separate calls both persist. (`save_chunks_pgvector` is
+  append-only.)
+- Re-uploading the **same filename** replaces just that document:
+  `_insert_documents_row` deletes the prior `(user_id, filename)` row
+  first, and the `document_chunks ... on delete cascade` FK removes its
+  old chunks. A differently-named file is untouched. So editing
+  resume.pdf and re-uploading replaces the resume without duplicating
+  and without touching essays.pdf.
+- Isolation is by `user_id` — the retrieval RPC filters
+  `where user_id = …`, so teammates must each use their **own** account
+  (own signup → own UUID). Sharing one account mixes and clobbers data.
+  Use `retrieval.clear_user_chunks_pgvector(user_id)` for an explicit
+  wipe (parity with the in-memory `clear_user_chunks`).
+
 ### 2. Inline imports are intentional
 Heavy libs (`google.generativeai`, `PyPDF2`, `supabase`) are imported
 **inside functions** so:

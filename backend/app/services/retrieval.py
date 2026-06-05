@@ -120,20 +120,29 @@ def save_chunks_pgvector(
     """
     Persist chunks + embeddings to Supabase's document_chunks table.
 
-    Design notes:
-    * Replaces any existing chunks for this user (re-uploading = replacing).
-      This is per our DECISIONS.md — a user has one active resume at a time.
-    * `document_id` is optional. When None, the chunk's document_id column
-      is left null (allowed by the schema). This is what happens during the
-      demo phase. Once Yousif's auth lands and ingest_document starts
-      passing a real UUID, every chunk row will be linked to its parent
-      `documents` row, which enables features like "delete this resume"
-      or "which resume did this chunk come from".
+    APPENDS — does not wipe the user's existing chunks. This mirrors the
+    in-memory path (ingest_document appends by default), so uploading a
+    resume and then essays accumulates both instead of the second upload
+    clobbering the first.
+
+    Replace-on-re-upload is handled one level up, in
+    embeddings._insert_documents_row: before inserting a new `documents`
+    row it deletes any prior row with the same (user_id, filename), and the
+    `document_chunks.document_id ... on delete cascade` FK removes that
+    document's old chunks. So re-uploading an edited resume.pdf replaces
+    its chunks without duplicating, while a differently-named essays.pdf
+    is left untouched.
+
+    For the relaxed-schema demo path (document_id is None, no documents
+    row), there is no filename-scoped cascade, so this function pure-appends
+    — same behavior as the in-memory store. Use clear_user_chunks_pgvector
+    to wipe explicitly when you want a clean slate.
+
+    `document_id` is optional. When None, the chunk's document_id column is
+    left null. When set (the authenticated path), every chunk row is linked
+    to its parent `documents` row.
     """
     client = _supabase_client()
-
-    # Wipe existing chunks for this user (re-uploading replaces, per ADR).
-    client.table("document_chunks").delete().eq("user_id", user_id).execute()
 
     rows: list[dict] = []
     for i, (chunk, emb) in enumerate(zip(chunks, embeddings)):
@@ -152,6 +161,23 @@ def save_chunks_pgvector(
 
     if rows:
         client.table("document_chunks").insert(rows).execute()
+
+
+def clear_user_chunks_pgvector(user_id: str) -> None:
+    """
+    Delete all of a user's documents and chunks from Supabase. Parity with
+    the in-memory clear_user_chunks. Not called on the normal upload path
+    (uploads append); used by clear_user_corpus for the dashboard's
+    wipe-and-rebuild and a future "delete all my data" feature.
+
+    Deletes the `documents` rows first — the
+    `document_chunks.document_id ... on delete cascade` FK removes their
+    chunks. Then deletes any remaining chunks not tied to a documents row
+    (the relaxed-schema demo path, where document_id is null).
+    """
+    client = _supabase_client()
+    client.table("documents").delete().eq("user_id", user_id).execute()
+    client.table("document_chunks").delete().eq("user_id", user_id).execute()
 
 
 def _retrieve_pgvector(user_id: str, query_embedding: list[float], k: int) -> list[str]:
