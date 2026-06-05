@@ -16,6 +16,7 @@
     "content_scripts": [{
         "matches": [
             "http://localhost:3000/*",
+            "http://localhost:3001/*",
             "http://localhost:8081/*",
             "https://*.ashbyhq.com/*",
             "https://*.greenhouse.io/*",
@@ -25,7 +26,7 @@
         "run_at": "document_idle"
     },
     {
-        "matches": ["http://localhost:3000/*"],
+        "matches": ["http://localhost:3000/*", "http://localhost:3001/*"],
         "js": ["src/install_detector.js"],
         "run_at": "document_idle"
     }],

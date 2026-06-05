@@ -363,9 +363,11 @@ function injectSidebar() {
 }
 
 if (typeof chrome !== "undefined" && chrome.runtime) {
-  // On the dashboard (localhost:3000), sync auth token to chrome.storage
-  // so the extension popup can use it without a separate login.
-  if (window.location.origin === "http://localhost:3000") {
+  // On the dashboard, sync auth token to chrome.storage so the extension popup
+  // can use it without a separate login. Next.js may serve on 3000 or 3001
+  // (e.g. when 3000 is taken), so both origins count as "the dashboard".
+  const DASHBOARD_ORIGINS = ["http://localhost:3000", "http://localhost:3001"];
+  if (DASHBOARD_ORIGINS.includes(window.location.origin)) {
     const token = localStorage.getItem("token");
     const userId = localStorage.getItem("user_id");
     const userEmail = localStorage.getItem("user_email");
