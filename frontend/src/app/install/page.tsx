@@ -9,7 +9,11 @@ export default function ExtensionPage() {
         <p style={{ color: "var(--muted)", fontSize: 14, marginBottom: 16 }}>
           Download the Personify Chrome extension and load it manually in Developer mode.
         </p>
-        <a href="/personify-extension.zip" download className="btn">
+        <a 
+          href="https://drive.google.com/uc?export=download&id=16vTV8kFoJMLvDUh7cHPkKRuFl7LD7tW-" 
+          target="_blank"
+          className="btn"
+        >
           ↓ Download Extension
         </a>
       </div>
