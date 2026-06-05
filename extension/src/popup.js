@@ -116,6 +116,95 @@ if (personifyBtn) {
     });
 }
 
+// ── Profile tab ──────────────────────────────────────────────────────────────
+const BACKEND = "http://localhost:8000";
+
+var loginBtn = document.getElementById("login-btn");
+if (loginBtn) {
+    loginBtn.addEventListener("click", function() {
+        var email = document.getElementById("login-email").value.trim();
+        var password = document.getElementById("login-password").value;
+        var errorEl = document.getElementById("login-error");
+        errorEl.style.display = "none";
+        loginBtn.disabled = true;
+        loginBtn.textContent = "Signing in…";
+
+        fetch(BACKEND + "/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: email, password: password }),
+        })
+        .then(function(r) { return r.ok ? r.json() : r.json().then(function(e) { throw new Error(e.detail || "Login failed"); }); })
+        .then(function(data) {
+            chrome.storage.local.set({
+                token: data.access_token,
+                userId: data.user_id,
+                userEmail: email,
+            }, function() {
+                loadProfile();
+            });
+        })
+        .catch(function(err) {
+            errorEl.textContent = err.message;
+            errorEl.style.display = "block";
+            loginBtn.disabled = false;
+            loginBtn.textContent = "Sign in";
+        });
+    });
+}
+
+function loadProfile() {
+    chrome.storage.local.get(["token", "userId", "userEmail"], function(data) {
+        var loading = document.getElementById("profile-loading");
+        var signedOut = document.getElementById("profile-signed-out");
+        var content = document.getElementById("profile-content");
+
+        if (!data.token) {
+            loading.style.display = "none";
+            signedOut.style.display = "block";
+            return;
+        }
+
+        var headers = { "Authorization": "Bearer " + data.token };
+        if (data.userId) headers["X-User-Id"] = data.userId;
+
+        // Show email from storage immediately, then confirm with /auth/me
+        var email = data.userEmail || data.userId || "Unknown";
+        var initial = email[0].toUpperCase();
+        document.getElementById("profile-avatar").textContent = initial;
+        document.getElementById("profile-name").textContent = email.split("@")[0];
+        document.getElementById("profile-email").textContent = email;
+
+        loading.style.display = "none";
+        content.style.display = "block";
+
+        // Fetch real documents from backend
+        fetch(BACKEND + "/documents", { headers: headers })
+            .then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(docs) {
+                var hasResume = docs.some(function(d) { return d.doc_type === "resume"; });
+                var hasOther = docs.some(function(d) { return d.doc_type !== "resume"; });
+                var resumeEl = document.getElementById("profile-resume-status");
+                var docsEl = document.getElementById("profile-docs-status");
+                resumeEl.textContent = hasResume ? "✓ Uploaded" : "Not uploaded";
+                resumeEl.className = "profile-value " + (hasResume ? "profile-ok" : "");
+                docsEl.textContent = hasOther ? "✓ Uploaded" : "None";
+                docsEl.className = "profile-value " + (hasOther ? "profile-ok" : "");
+            })
+            .catch(function() {
+                document.getElementById("profile-resume-status").textContent = "—";
+                document.getElementById("profile-docs-status").textContent = "—";
+            });
+    });
+}
+
+// Load profile when profile tab is clicked
+document.querySelectorAll(".tab").forEach(function(tab) {
+    if (tab.dataset.tab === "profile") {
+        tab.addEventListener("click", loadProfile);
+    }
+});
+
 // ── Auto scan on popup open ───────────────────────────────────────────────────
 // Uses chrome.tabs from popup context (not service worker)
 chrome.tabs.query({ active: true, currentWindow: true }, function(tabs) {
