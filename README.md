@@ -25,21 +25,18 @@ Unlike Simplify, which only autofills structured fields and skips personal state
 
 ## Features
 
-**Implemented in this skeleton:**
-- Project structure for all four components (extension, frontend, backend, AI pipeline)
-- Health check endpoints between every layer
-- Stub `/autofill` endpoint that returns mock generated responses
-- Chrome extension scaffold with a content script that talks to the backend
-- Next.js dashboard scaffold with one upload page and one history page
-- Supabase + pgvector schema migrations
-- Environment variable templates
+**Implemented:**
+- Document upload pipeline: extract → chunk → embed → store (Supabase pgvector, with an in-memory fallback when Supabase isn't configured)
+- LangChain classify → retrieve → generate flow with Gemini (2.5-flash chat + gemini-embedding-001)
+- Confidence-gated autofill — generation only fires for fields the classifier is sure about
+- Retrieval quality layers: query boost (company + job description folded into the embedding query) and cross-question MMR diversity
+- Three prompt variants (motivation / story / background) routed by question shape
+- Supabase auth end-to-end: JWT sessions, `X-User-Id` on upload and autofill, per-user document isolation
+- Dashboard upload with staged files and wipe-and-rebuild semantics (re-uploads never duplicate chunks)
+- Chrome extension content script + smoke-test harness (`ai_tests/fake_job_page.html`)
 
-**To be implemented (assigned across the team):**
-- ⏳ Real document upload, chunking, and embedding pipeline
-- ⏳ LangChain classify → retrieve → generate flow
-- ⏳ Gemini API integration
-- ⏳ Composite selector strategy for messy ATS portals
-- ⏳ Authentication flow end-to-end
+**Remaining (stretch / hardening):**
+- ⏳ Composite selector hardening for messy ATS portals (Workday, Greenhouse)
 - ⏳ Production-quality error handling and logging
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for what each role owns next.
@@ -64,15 +61,16 @@ The system follows a **perceive → decide → act** agentic loop:
 │                  PYTHON BACKEND (FastAPI)                    │
 │  ┌──────────────────┐         ┌───────────────────────────┐  │
 │  │  Backend Core    │         │  AI Pipeline              │  │
-│  │  /auth /upload   │         │  /autofill /embed         │  │
-│  │  /history        │         │  LangChain pipeline       │  │
+│  │  /auth /upload   │         │  /autofill /classify      │  │
+│  │  /documents      │         │  LangChain pipeline       │  │
+│  │  /history        │         │  (RAG + prompt variants)  │  │
 │  └────────┬─────────┘         └─────────────┬─────────────┘  │
 └───────────┼─────────────────────────────────┼────────────────┘
             ▼                                 ▼
-   ┌────────────────────┐         ┌────────────────────┐
-   │     Supabase       │         │    Gemini API      │
-   │  auth + pgvector   │         │  classify + gen    │
-   └────────────────────┘         └────────────────────┘
+   ┌────────────────────┐         ┌────────────────────────┐
+   │     Supabase       │         │      Gemini API        │
+   │  auth + pgvector   │         │ classify · embed · gen │
+   └────────────────────┘         └────────────────────────┘
 ```
 
 For the full architecture including detailed workflow diagrams, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -86,8 +84,8 @@ personify/
 ├── backend/                  Python FastAPI service
 │   ├── app/
 │   │   ├── core/             Config, settings, Supabase client
-│   │   ├── routers/          /auth, /upload, /autofill, /history
-│   │   ├── services/         LangChain pipeline, embeddings
+│   │   ├── routers/          /auth, /upload, /documents, /autofill, /history
+│   │   ├── services/         LangChain pipeline, embeddings, retrieval
 │   │   └── models/           Pydantic schemas
 │   ├── tests/
 │   ├── requirements.txt
@@ -108,10 +106,12 @@ personify/
 │   ├── icons/
 │   └── manifest.json
 │
+├── ai_tests/                 Smoke-test harness + e2e CLI runner
 ├── docs/                     Architecture, roadmap, decisions
 │   ├── ARCHITECTURE.md
 │   ├── ROADMAP.md
-│   └── DECISIONS.md
+│   ├── DECISIONS.md
+│   └── INTERFACE_SPEC.md
 │
 ├── supabase/                 SQL migrations and pgvector setup
 │   └── migrations/
@@ -171,7 +171,7 @@ cp .env.local.example .env.local
 
 1. Create a new Supabase project at [supabase.com](https://supabase.com)
 2. In the SQL editor, run the migrations in `supabase/migrations/` in order
-3. Copy the project URL and anon key into both `.env` files
+3. Copy the project URL, anon key, and **service_role key** into `backend/.env` (the service key is what lets the backend write embeddings)
 
 ---
 
@@ -207,22 +207,68 @@ npm run dev
 
 ## Workflow
 
-The core agentic flow is the **autofill loop**:
+### How Personify works — RAG + Autofill
+
+```text
+┌─────────────────────────────  USER'S BROWSER  ─────────────────────────────┐
+│                                                                            │
+│   ┌──────────────────────────┐          ┌──────────────────────────────┐   │
+│   │    Next.js Dashboard     │          │       Chrome Extension       │   │
+│   │  login · attach + upload │          │  content_script: scans form, │   │
+│   │  resume + essays         │          │  detects open-ended fields,  │   │
+│   │                          │          │  pastes generated answers    │   │
+│   └────────────┬─────────────┘          └───────────────┬──────────────┘   │
+└────────────────┼────────────────────────────────────────┼──────────────────┘
+                 │ (A) POST /upload                        │ (B) POST /autofill
+                 │     X-User-Id + file                    │     X-User-Id + fields
+                 ▼                                         ▼     + job description
+┌────────────────────────────────────────────────────────────────────────────┐
+│                               FASTAPI BACKEND                              │
+│                                                                            │
+│    UPLOAD PIPELINE — per file           AUTOFILL PIPELINE — per question   │
+│   ┌──────────────────────────┐          ┌──────────────────────────────┐   │
+│   │ extract text + normalize │          │ 1 classify the field         │   │
+│   │ chunk (800 chars,        │          │   confidence < 0.7 → skip    │   │
+│   │        100 overlap)      │          │ 2 retrieve top-k chunks      │   │
+│   │ embed each chunk         │          │   query boost · MMR penalty  │   │
+│   │ store under user_id      │          │ 3 generate the answer        │   │
+│   └────────────┬─────────────┘          │   prompt variant by question │   │
+│                │                        └───────────────┬──────────────┘   │
+└────────────────┼────────────────────────────────────────┼──────────────────┘
+                 │ insert chunks                ┌──────────┤
+                 │ + embeddings                 │ per-user │ embed · classify
+                 ▼                              ▼ search   ▼ · generate
+   ┌──────────────────────────────────────────────┐  ┌─────────────────────────┐
+   │          SUPABASE — auth + pgvector          │  │        GEMINI API       │
+   │   auth.users · documents · document_chunks   │  │ gemini-2.5-flash (chat) │
+   │               (vector(768))                  │  │ gemini-embedding-001    │
+   └──────────────────────────────────────────────┘  └─────────────────────────┘
+
+   (B) returns [{ selector, response }] → the extension pastes each answer
+       into its matching field
+```
+
+The autofill pipeline (B) is the RAG core: each answer is generated only from
+the user's own resume/essay chunks, retrieved per question with a boosted
+query and an MMR diversity penalty, so every field stays grounded in the
+applicant's real experience.
+
+### The autofill loop in detail
 
 1. User clicks **Autofill** in the extension popup on any job application page
 2. `content_script.js` scans the DOM, collecting every form field with its label and selector
-3. Bundled fields + scraped job description are POSTed to `/autofill`
+3. Bundled fields + scraped job description are POSTed to `/autofill` with the user's `X-User-Id`
 4. Backend pipeline runs three steps via LangChain:
-   - **Classify** — Gemini decides which fields are personal statements
-   - **Retrieve** — pgvector returns the most relevant chunks from the user's resume
-   - **Generate** — Gemini writes a personalized response per field
-5. Backend returns a map of `{ selector → response }`
+   - **Classify** — Gemini decides which fields are personal statements (a confidence threshold skips uncertain fields)
+   - **Retrieve** — pgvector returns the most relevant chunks from the user's resume and essays (the query is boosted with the company name and job description)
+   - **Generate** — Gemini writes a personalized response per field using a prompt variant matched to the question type
+5. Backend returns a list of `{ selector, response }` pairs plus request metadata
 6. Content script pastes each response into the correct field
 
-Document upload (separate workflow):
-1. User uploads resume/essays via the dashboard
-2. Backend chunks the document into ~300 token segments
-3. Each chunk is embedded and stored in Supabase pgvector tied to the user's ID
+### Document upload (separate workflow)
+
+1. User attaches resume/essays via the dashboard and clicks **Upload documents**
+2. Backend clears the user's previous corpus, then for each file: extracts text, splits it into 800-character chunks (100 overlap), embeds each chunk with Gemini, and stores everything in Supabase pgvector tied to the user's ID (in-memory fallback when Supabase isn't configured)
 
 For sequence diagrams, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -243,11 +289,11 @@ The shorthand list — full reasoning is in [`docs/DECISIONS.md`](docs/DECISIONS
 
 ## Project Status
 
-This repository currently contains the **skeleton only**. Every layer has just enough code to communicate with the next layer for a health check. Real functionality is implemented incrementally per the [roadmap](docs/ROADMAP.md).
+All core functionality is implemented and working end-to-end: document upload with Supabase pgvector storage, the classify → retrieve → generate pipeline against the real Gemini API, per-user auth, and autofill through both the smoke-test harness and the extension. Remaining work is hardening (ATS portal selectors, production error handling) per the [roadmap](docs/ROADMAP.md).
 
 **Milestone schedule:**
-- **Milestone 1 — Working MVP** — May 9, 2026
-- **Milestone 2 — Full Feature Set** — May 16, 2026
+- **Milestone 1 — Working MVP** — May 9, 2026 ✅
+- **Milestone 2 — Full Feature Set** — May 16, 2026 ✅
 - **Milestone 3 — Polish & Stretch** — June 6, 2026
 
 ---
